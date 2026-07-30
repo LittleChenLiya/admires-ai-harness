@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.31.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -23,18 +23,18 @@ dependencies = [
   "httpx>=0.28,<1",
   "pydantic>=2.11,<3",
   "pydantic-settings>=2.10,<3",
-  "rich>=14,<15",
+  "rich>=15.0.0,<16",
   "typer>=0.16,<1",
-  "uvicorn[standard]>=0.35,<1",
+  "uvicorn[standard]>=0.51.0,<1",
 ]
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.12,<2"]
 dev = [
-  "mypy>=1.17,<2",
-  "pytest>=8.4,<9",
+  "mypy>=2.3.0,<3",
+  "pytest>=9.1.1,<10",
   "pytest-asyncio>=1.1,<2",
-  "pytest-cov>=6.2,<7",
+  "pytest-cov>=7.1.0,<8",
   "ruff>=0.12,<1",
 ]
 
