@@ -1,0 +1,3 @@
+{"id":"research-citations","input":"Explain why event-sourced agent runtimes are easier to debug.","expected":{"text":"Sources","tools":[]},"metadata":{"demo":"research"},"tags":["offline","research"]}
+{"id":"coding-artifact","input":"Create a Python slugify utility with a compact self-check.","expected":{"text":"slugify.py","tools":["workspace.list","workspace.write"]},"metadata":{"demo":"coding"},"tags":["offline","coding","approval"]}
+{"id":"collaboration-delegation","input":"Design a safe rollout checklist for an AI coding agent.","expected":{"text":"rollout checklist","tools":[]},"metadata":{"demo":"collaboration"},"tags":["offline","multi-agent"]}

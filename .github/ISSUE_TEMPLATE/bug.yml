@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible defect in the harness
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include the run ID and the smallest reproducer when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python/Node version, provider, and deployment method.
+    validations:
+      required: true

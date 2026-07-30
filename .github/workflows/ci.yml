@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-quality:
+    name: Python · quality and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-extras
+      - name: Format
+        run: uv run ruff format --check src tests
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Type check
+        run: uv run mypy src
+      - name: Tests and package coverage
+        run: >-
+          uv run python -m pytest tests -m "not e2e"
+          --cov=admires_harness --cov-branch
+          --cov-report=term-missing --cov-report=xml --cov-fail-under=85
+      - name: Core runtime coverage gate
+        run: >-
+          uv run python -m pytest tests/unit/runtime
+          --cov=admires_harness.runtime --cov-branch
+          --cov-report=term-missing --cov-fail-under=85
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage
+          path: coverage.xml
+
+  security:
+    name: Security · negative paths
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-extras
+      - run: uv run python -m pytest tests -m security -v
+
+  integration:
+    name: Integration · API, persistence, and demos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-extras
+      - run: uv run python -m pytest tests/integration -v
+      - run: uv run admire demo all --json
+      - run: uv run admire evaluate evaluation/reference.jsonl --report eval-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-report
+          path: eval-report.json
+
+  web:
+    name: Web · quality, tests, and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  e2e:
+    name: E2E · browser workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: uv sync --frozen --all-extras
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web exec playwright install --with-deps chromium
+      - run: pnpm --dir web test:e2e
+
+  container:
+    name: Container · build and offline smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: admires-ai-harness:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Offline demo smoke
+        run: >-
+          docker run --rm --network none
+          --read-only --tmpfs /tmp:mode=1777 --tmpfs /data:uid=10001,gid=10001,mode=0700
+          -e ADMIRE_DATABASE_PATH=/data/harness.db
+          -e ADMIRE_WORKSPACE_ROOT=/data/workspaces
+          -e ADMIRE_WEB_DIST=/app/web/dist
+          admires-ai-harness:test demo all --json

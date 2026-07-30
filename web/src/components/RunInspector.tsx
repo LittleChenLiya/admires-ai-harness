@@ -1,0 +1,97 @@
+import { Ban, RotateCcw } from "lucide-react";
+
+import type { Approval, Run, RunEvent } from "../types";
+import { ApprovalCard } from "./ApprovalCard";
+import { EventTimeline } from "./EventTimeline";
+import { MetricStrip } from "./MetricStrip";
+import { StatusPill } from "./StatusPill";
+
+interface Props {
+  run: Run | null;
+  events: RunEvent[];
+  approvals: Approval[];
+  onDecide: (requestId: string, approved: boolean) => Promise<void>;
+  onResume: () => Promise<void>;
+  onCancel: () => Promise<void>;
+}
+
+export function RunInspector({
+  run,
+  events,
+  approvals,
+  onDecide,
+  onResume,
+  onCancel,
+}: Props) {
+  if (!run) {
+    return (
+      <section className="inspector panel empty-inspector">
+        <p className="eyebrow">TRACE EXPLORER</p>
+        <h2>Select or launch a run</h2>
+        <p>
+          Every model call, tool boundary, checkpoint, delegation, and policy
+          decision is observable.
+        </p>
+      </section>
+    );
+  }
+
+  const canResume = run.status === "paused";
+  const canCancel = [
+    "created",
+    "running",
+    "paused",
+    "waiting_approval",
+  ].includes(run.status);
+
+  return (
+    <section className="inspector panel" aria-labelledby="inspector-title">
+      <div className="inspector-header">
+        <div>
+          <div className="title-with-status">
+            <h2 id="inspector-title">{run.demo} trace</h2>
+            <StatusPill status={run.status} />
+          </div>
+          <code>{run.id}</code>
+        </div>
+        <div className="run-actions">
+          {canResume && (
+            <button type="button" onClick={() => void onResume()}>
+              <RotateCcw size={14} /> Resume
+            </button>
+          )}
+          {canCancel && (
+            <button type="button" onClick={() => void onCancel()}>
+              <Ban size={14} /> Cancel
+            </button>
+          )}
+        </div>
+      </div>
+      <MetricStrip metrics={run.metrics} />
+      {approvals.map((approval) => (
+        <ApprovalCard
+          key={approval.requestId}
+          approval={approval}
+          onDecide={onDecide}
+        />
+      ))}
+      {run.output && (
+        <div className="output-card">
+          <span>Final output</span>
+          <p>{run.output}</p>
+        </div>
+      )}
+      {run.error && (
+        <div className="error-card">
+          <span>Run failed</span>
+          <p>{run.error}</p>
+        </div>
+      )}
+      <div className="timeline-heading">
+        <h3>Event timeline</h3>
+        <span>{events.length} events · live</span>
+      </div>
+      <EventTimeline events={events} />
+    </section>
+  );
+}
