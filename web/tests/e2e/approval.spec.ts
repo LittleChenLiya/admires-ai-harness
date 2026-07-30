@@ -9,22 +9,32 @@ test("a coding write waits for one-shot approval and exposes its trace", async (
   await page
     .getByLabel("Task input")
     .fill("Create a browser-tested slugify utility");
+  const startResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/runs") &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Run workflow" }).click();
+  const started = (await (await startResponse).json()) as { id: string };
+
+  const inspector = page.getByRole("region", { name: "coding trace" });
+  await expect(inspector.getByText(started.id, { exact: true })).toBeVisible();
+  await expect(
+    inspector.getByText("workspace.write", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole("button", { name: "Approve once" }),
+  ).toBeVisible();
+  await inspector.getByRole("button", { name: "Approve once" }).click();
 
   await expect(
-    page.getByText("workspace.write", { exact: true }).first(),
+    inspector.locator(".title-with-status .status-succeeded"),
+  ).toHaveText("succeeded", { timeout: 15_000 });
+  await expect(inspector.getByText(/Created `slugify.py`/)).toBeVisible();
+  await expect(
+    inspector.getByText("approval.consumed", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Approve once" }),
+    inspector.getByText("run.completed", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Approve once" }).click();
-
-  await expect(
-    page.getByText("succeeded", { exact: true }).first(),
-  ).toBeVisible();
-  await expect(page.getByText(/Created `slugify.py`/)).toBeVisible();
-  await expect(
-    page.getByText("approval.consumed", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("run.completed", { exact: true })).toBeVisible();
 });

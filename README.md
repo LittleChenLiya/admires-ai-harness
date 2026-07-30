@@ -198,7 +198,7 @@ The required GitHub Actions matrix runs:
 - deterministic three-demo smoke and evaluation report generation;
 - Prettier, ESLint, TypeScript, Vitest and the production Web build;
 - Playwright Chromium tests for research and coding approval workflows;
-- a non-root, read-only-container build plus offline smoke;
+- the README's Docker Compose topology, including service health and all three offline demos;
 - CodeQL for Python and JavaScript/TypeScript.
 
 Run the same local gates with `make check`, or see the individual commands in

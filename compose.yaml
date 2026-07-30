@@ -45,6 +45,9 @@ services:
       target: runtime
     profiles: ["demo"]
     command: ["demo", "all", "--json"]
+    depends_on:
+      harness:
+        condition: service_healthy
     environment:
       ADMIRE_DATABASE_PATH: /data/harness.db
       ADMIRE_WORKSPACE_ROOT: /data/workspaces

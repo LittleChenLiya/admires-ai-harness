@@ -17,8 +17,8 @@ jobs:
     name: Python · quality and tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: uv sync --frozen --all-extras
@@ -38,7 +38,7 @@ jobs:
           uv run python -m pytest tests/unit/runtime
           --cov=admires_harness.runtime --cov-branch
           --cov-report=term-missing --cov-fail-under=85
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: python-coverage
           path: coverage.xml
@@ -47,8 +47,8 @@ jobs:
     name: Security · negative paths
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: uv sync --frozen --all-extras
@@ -58,15 +58,15 @@ jobs:
     name: Integration · API, persistence, and demos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: uv sync --frozen --all-extras
       - run: uv run python -m pytest tests/integration -v
       - run: uv run admire demo all --json
       - run: uv run admire evaluate evaluation/reference.jsonl --report eval-report.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: evaluation-report
           path: eval-report.json
@@ -78,12 +78,12 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.9.0
           run_install: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -99,15 +99,15 @@ jobs:
     name: E2E · browser workflows
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.9.0
           run_install: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -118,23 +118,17 @@ jobs:
       - run: pnpm --dir web test:e2e
 
   container:
-    name: Container · build and offline smoke
+    name: Container · Compose acceptance
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: admires-ai-harness:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Offline demo smoke
+      - uses: actions/checkout@v7
+      - name: Web/API health and all offline demos
         run: >-
-          docker run --rm --network none
-          --read-only --tmpfs /tmp:mode=1777 --tmpfs /data:uid=10001,gid=10001,mode=0700
-          -e ADMIRE_DATABASE_PATH=/data/harness.db
-          -e ADMIRE_WORKSPACE_ROOT=/data/workspaces
-          -e ADMIRE_WEB_DIST=/app/web/dist
-          admires-ai-harness:test demo all --json
+          docker compose --profile demo up --build
+          --abort-on-container-exit --exit-code-from demo-smoke
+      - name: Compose logs
+        if: always()
+        run: docker compose --profile demo logs --no-color
+      - name: Compose cleanup
+        if: always()
+        run: docker compose --profile demo down --volumes --remove-orphans
