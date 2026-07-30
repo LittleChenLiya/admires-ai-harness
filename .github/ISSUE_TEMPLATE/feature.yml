@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a focused capability or extension to the harness
+title: "[Feature]: "
+labels: [enhancement, "needs design"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement. Describe the problem before the implementation.
+        Public runtime, safety, persistence, and recovery contracts need design agreement first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What learning, extension, or user workflow is blocked today?
+      placeholder: A concrete scenario is more useful than a list of technologies.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable behavior and how we could verify it.
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Possible approach
+      description: Optional design sketch, affected ports, or alternatives considered.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope boundaries
+      description: What should explicitly remain unchanged or out of scope?
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Contribution intent
+      options:
+        - I can open a pull request after scope is agreed
+        - I can help test or review
+        - I am proposing the idea only
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and the roadmap for related work.
+          required: true
+        - label: This request keeps the deterministic offline path available.
+          required: true

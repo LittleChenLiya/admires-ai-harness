@@ -3,11 +3,24 @@ description: Report a reproducible defect in the harness
 title: "[Bug]: "
 labels: [bug]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Please reduce the problem to the deterministic mock provider when possible.
+        Report exploitable security problems through a private security advisory instead.
   - type: textarea
     id: behavior
     attributes:
       label: What happened?
       description: Include the run ID and the smallest reproducer when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include commands, input, relevant configuration, and the smallest code sample.
+      render: shell
     validations:
       required: true
   - type: textarea
@@ -17,9 +30,23 @@ body:
     validations:
       required: true
   - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or run evidence
+      description: Include safe excerpts, run/event IDs, or a failing test. Remove secrets and private data.
+  - type: textarea
     id: environment
     attributes:
       label: Environment
       description: OS, Python/Node version, provider, and deployment method.
     validations:
       required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed credentials, tokens, and private data from this report.
+          required: true

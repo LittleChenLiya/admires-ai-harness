@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/LittleChenLiya/admires-ai-harness/discussions
+    about: Ask usage questions or explore an idea before turning it into scoped work.
+  - name: Private security report
+    url: https://github.com/LittleChenLiya/admires-ai-harness/security/advisories/new
+    about: Report a vulnerability privately; do not open a public issue.
