@@ -38,7 +38,7 @@ jobs:
           uv run python -m pytest tests/unit/runtime
           --cov=admires_harness.runtime --cov-branch
           --cov-report=term-missing --cov-fail-under=85
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: python-coverage
           path: coverage.xml
@@ -66,7 +66,7 @@ jobs:
       - run: uv run python -m pytest tests/integration -v
       - run: uv run admire demo all --json
       - run: uv run admire evaluate evaluation/reference.jsonl --report eval-report.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: evaluation-report
           path: eval-report.json
