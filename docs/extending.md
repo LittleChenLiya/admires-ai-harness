@@ -34,6 +34,11 @@ schemas, and wrap the resulting executor in `SecuredToolExecutor` with matching 
 before injecting it into a graph. The three reference workflows deliberately do not auto-wire
 MCP. Pin server packages and do not pass the entire process environment to an untrusted server.
 
+See [`examples/policy_wrapped_mcp.py`](../examples/policy_wrapped_mcp.py) for an offline
+stdio pattern that allowlists one remote tool, namespaces its exposed name, passes an empty
+environment, and applies explicit read-only policy before execution. Transport and tool errors
+remain normalized `ToolResult` values; do not expose raw server exceptions to a model.
+
 ## Add a grader
 
 Prefer deterministic graders over model-judged grading: exact answer, required substring,
