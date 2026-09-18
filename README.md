@@ -268,6 +268,7 @@ isolation.
 - [Architecture and runtime semantics](docs/architecture.md)
 - [Security model and residual risks](docs/security.md)
 - [Evaluation methodology](docs/evaluation.md)
+- [Custom conditional graph walkthrough](docs/custom-graph.md)
 - [Extension guide](docs/extending.md)
 - [Contributor quickstart](docs/contributor-quickstart.md)
 - [Code map](docs/code-map.md)
