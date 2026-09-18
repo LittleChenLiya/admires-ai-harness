@@ -5,6 +5,10 @@ event language.
 
 ## Add a graph
 
+For a complete end-to-end introduction with a real conditional branch and the
+deterministic mock model, start with the [custom graph walkthrough](custom-graph.md) and
+its runnable companion [`examples/custom_graph_triage.py`](../examples/custom_graph_triage.py).
+
 1. Implement small async nodes that accept `NodeContext`.
 2. Return a `NodeResult`; never mutate `context.state`.
 3. Declare every possible destination as an edge.
