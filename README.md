@@ -147,6 +147,10 @@ event exists. Checkpoint compare-and-swap and execution leases prevent two worke
 advancing the same run. Replay reads persisted state and events without invoking a model or
 tool. See [the architecture guide](docs/architecture.md) for graph and recovery semantics.
 
+Want to build your own? The [custom graph walkthrough](docs/custom-graph-walkthrough.md)
+defines, compiles, and runs a conditional triage graph against the deterministic mock
+model; the runnable script is [examples/custom_conditional_graph.py](examples/custom_conditional_graph.py).
+
 ## Capability matrix and evidence
 
 | Capability                                                                              | Implementation                                                                                        | Executable evidence                                                                                  |
@@ -269,6 +273,7 @@ isolation.
 - [Security model and residual risks](docs/security.md)
 - [Evaluation methodology](docs/evaluation.md)
 - [Extension guide](docs/extending.md)
+- [Custom graph walkthrough](docs/custom-graph-walkthrough.md) — define and run a conditional graph offline, with a runnable [examples script](examples/custom_conditional_graph.py).
 - [Contributor quickstart](docs/contributor-quickstart.md)
 - [Code map](docs/code-map.md)
 - [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)

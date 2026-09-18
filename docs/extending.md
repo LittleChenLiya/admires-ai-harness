@@ -11,6 +11,9 @@ event language.
 4. Compile during application startup so structural errors fail early.
 5. Add an offline deterministic end-to-end test and at least one failure-path test.
 
+The [custom graph walkthrough](custom-graph-walkthrough.md) shows all five steps end to end
+with a real conditional branch and [examples/custom_conditional_graph.py](../examples/custom_conditional_graph.py).
+
 ## Add a model provider
 
 Implement `ModelProvider.complete()` and `stream()`. Normalize response content, tool calls,
