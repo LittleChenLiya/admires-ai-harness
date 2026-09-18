@@ -107,3 +107,50 @@ async def test_mcp_adapter_normalizes_timeout_and_transport_error() -> None:
     )
     assert failed.error_code == "mcp_transport_error"
     assert "private server details" not in failed.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result",
+    [
+        None,
+        42,
+        {"isError": False},
+        {"content": "not-a-sequence"},
+        {"content": [42]},
+        {"content": ["raw-string-block"]},
+    ],
+)
+async def test_mcp_adapter_normalizes_malformed_responses(result: Any) -> None:
+    client = FakeMCPClient()
+    client.result = result
+    executor = await MCPToolExecutor.connect(
+        client, server_name="demo", allow_tools=frozenset({"weather"})
+    )
+
+    outcome = await executor.execute(
+        ToolCall(name="demo__weather"), run_id=uuid4(), idempotency_key="malformed"
+    )
+
+    assert not outcome.ok
+    assert outcome.error_code == "mcp_malformed_response"
+    assert not outcome.retryable
+
+
+def test_mcp_adapter_accepts_empty_content_sequence() -> None:
+    # An empty list is a structurally valid (if uninformative) MCP result; it must not
+    # be misclassified as malformed.
+    client = FakeMCPClient()
+    client.result = {"content": []}
+
+    async def scenario() -> None:
+        executor = await MCPToolExecutor.connect(
+            client, server_name="demo", allow_tools=frozenset({"weather"})
+        )
+        outcome = await executor.execute(
+            ToolCall(name="demo__weather"), run_id=uuid4(), idempotency_key="empty"
+        )
+        assert outcome.ok
+        assert outcome.content == ""
+
+    asyncio.run(scenario())

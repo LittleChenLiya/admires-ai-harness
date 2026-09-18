@@ -53,7 +53,7 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
 | secret leakage in logs | structured safe fields and provider error normalization | secrets deliberately put in user content |
 | cross-run memory leak | required namespace in every read/write and composite identity | application choosing a shared namespace |
 | corrupt vector index | finite-value checks and one embedding dimension per namespace | poor retrieval from a weak embedder |
-| malicious MCP server | opt-in adapter, allowlisted discovery, and documented policy-wrapping boundary | the reference workflows do not auto-wire MCP; its process needs OS isolation |
+| malicious MCP server | opt-in adapter, allowlisted discovery, policy-wrapping boundary, and malformed-response rejection | the reference workflows do not auto-wire MCP; its process needs OS isolation |
 | denial of service | budgets, timeouts, bounded queues/output | local resource exhaustion remains possible |
 
 ## Reporting a vulnerability
