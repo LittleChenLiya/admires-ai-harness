@@ -206,6 +206,18 @@ before injecting it into a graph. MCP is not auto-wired into the three demos: a 
 untrusted code, and the adapter alone is not an authorization boundary. The exact extension
 steps are in [docs/extending.md](docs/extending.md).
 
+A fully offline, executable walkthrough lives in
+[`examples/mcp_policy/`](examples/mcp_policy/). It spawns a controlled stdlib stdio
+fixture (no network, credentials, or real external server) and demonstrates server
+allowlisting, namespaced discovery and calls, default-deny policy, one-shot approvals,
+and normalized `policy_denied`, `mcp_tool_not_found`, `mcp_tool_error`, `mcp_timeout`,
+and `mcp_malformed_response` failures:
+
+```bash
+uv sync --extra mcp
+uv run python examples/mcp_policy/run_example.py
+```
+
 ## Quality gates
 
 The required GitHub Actions matrix runs:

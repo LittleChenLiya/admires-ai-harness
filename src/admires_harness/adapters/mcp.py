@@ -16,6 +16,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Protocol, cast
 from uuid import UUID
 
+from pydantic import BaseModel, ValidationError
+
 from admires_harness.contracts import JsonValue, ToolCall, ToolResult
 
 
@@ -64,6 +66,27 @@ def _content_text(content: Any) -> str:
         if resource is not None:
             rendered.append(json.dumps(_as_json(resource), ensure_ascii=False, sort_keys=True))
     return "\n".join(rendered)
+
+
+def _malformed_tool_response(response: Any) -> str | None:
+    """Return a reason when a ``call_tool`` response cannot be consumed safely.
+
+    MCP servers are untrusted inputs. A response missing the required ``content``
+    sequence, or carrying primitive content blocks, must not be silently rendered as an
+    empty success.
+    """
+
+    if not isinstance(response, Mapping | BaseModel):
+        return "response was not a structured object"
+    content = _read(response, "content", None)
+    if content is None:
+        return "response is missing the required content field"
+    if not isinstance(content, Sequence) or isinstance(content, (str, bytes)):
+        return "response content must be a sequence of blocks"
+    for block in content:
+        if not isinstance(block, Mapping | BaseModel):
+            return "response content contains a non-object block"
+    return None
 
 
 class MCPToolExecutor:
@@ -162,6 +185,12 @@ class MCPToolExecutor:
                 content=f"MCP tool {call.name!r} timed out.",
                 retryable=True,
             )
+        except ValidationError:
+            return ToolResult(
+                ok=False,
+                error_code="mcp_malformed_response",
+                content=f"MCP tool {call.name!r} returned a malformed response.",
+            )
         except Exception as exc:  # SDK transports expose several implementation-specific errors.
             return ToolResult(
                 ok=False,
@@ -170,6 +199,13 @@ class MCPToolExecutor:
                 retryable=True,
             )
 
+        malformed = _malformed_tool_response(response)
+        if malformed is not None:
+            return ToolResult(
+                ok=False,
+                error_code="mcp_malformed_response",
+                content=f"MCP tool {call.name!r} returned a malformed response: {malformed}.",
+            )
         failed = bool(_read(response, "isError", _read(response, "is_error", False)))
         structured = _as_json(
             _read(response, "structuredContent", _read(response, "structured_content", {}))

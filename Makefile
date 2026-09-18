@@ -1,4 +1,4 @@
-.PHONY: install format format-check lint typecheck test test-runtime test-security test-e2e coverage web-check check demo eval dev
+.PHONY: install format format-check lint typecheck test test-runtime test-security test-e2e coverage web-check check demo eval dev example-mcp
 
 install:
 	uv sync --all-extras
@@ -48,6 +48,10 @@ check: format-check lint typecheck test test-runtime web-check
 
 demo:
 	uv run admire demo all
+
+example-mcp:
+	uv sync --extra mcp
+	uv run python examples/mcp_policy/run_example.py
 
 eval:
 	uv run admire evaluate evaluation/reference.jsonl

@@ -34,6 +34,11 @@ schemas, and wrap the resulting executor in `SecuredToolExecutor` with matching 
 before injecting it into a graph. The three reference workflows deliberately do not auto-wire
 MCP. Pin server packages and do not pass the entire process environment to an untrusted server.
 
+For a runnable, fully offline demonstration (local stdio fixture, allowlisted discovery,
+`server__tool` namespacing, default-deny policy, one-shot approvals, and normalized
+denied/unknown/timeout/malformed failures), see
+[`examples/mcp_policy/README.md`](../examples/mcp_policy/README.md).
+
 ## Add a grader
 
 Prefer deterministic graders over model-judged grading: exact answer, required substring,
