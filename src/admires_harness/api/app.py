@@ -10,13 +10,14 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from admires_harness.agents import list_demos
 from admires_harness.config import Settings
 from admires_harness.contracts import JsonValue, RunEvent
+from admires_harness.observability import DEFAULT_MAX_EVENTS, MAX_EVENTS_LIMIT
 from admires_harness.services.runs import RunManager, as_camel
 
 
@@ -120,6 +121,23 @@ def create_app(settings: Settings | None = None, *, manager: RunManager | None =
         if not events and not await service.list_events(_uuid(run_id)):
             raise HTTPException(status_code=404, detail="run not found")
         return [_event_json(event) for event in events]
+
+    @app.get("/api/runs/{run_id}/export", tags=["runs"])
+    async def export_run(
+        run_id: str,
+        service: ManagerDependency,
+        max_events: int = Query(
+            default=DEFAULT_MAX_EVENTS, ge=1, le=MAX_EVENTS_LIMIT, alias="maxEvents"
+        ),
+    ) -> JSONResponse:
+        try:
+            export = await service.export_trace(_uuid(run_id), max_events=max_events)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        return JSONResponse(
+            export.model_dump(mode="json"),
+            headers={"Content-Disposition": (f'attachment; filename="trace-{export.run_id}.json"')},
+        )
 
     @app.get("/api/runs/{run_id}/replay", tags=["runs"])
     async def replay_run(run_id: str, service: ManagerDependency) -> dict[str, JsonValue]:

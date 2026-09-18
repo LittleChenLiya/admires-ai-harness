@@ -20,10 +20,11 @@ from admires_harness.contracts import (
     RunBudget,
     RunEvent,
     RunStatus,
+    TraceExport,
     utc_now,
 )
 from admires_harness.memory import RAGRetriever, SQLiteMemoryStore
-from admires_harness.observability import RunView, project_run
+from admires_harness.observability import RunView, build_trace_export, project_run
 from admires_harness.runtime import CheckpointConflictError, GraphRuntime
 from admires_harness.safety import ApprovalGate, SafetyPolicy, SecuredToolExecutor, WorkspaceSandbox
 from admires_harness.storage import SQLiteCheckpointStore, SQLiteEventStore
@@ -328,6 +329,19 @@ class RunManager:
             "checkpointRevision": snapshot.checkpoint_revision,
             "events": event_payloads,
         }
+
+    async def export_trace(self, run_id: UUID, *, max_events: int = 1_000) -> TraceExport:
+        """Build a bounded, redacted export of a run's persisted events.
+
+        Read-only: no model call, no tool execution, no run mutation. Raises
+        ``KeyError`` when the run is unknown or has no persisted events.
+        """
+
+        await self.initialize()
+        events = await self.events.list(run_id)
+        if not events:
+            raise KeyError(str(run_id))
+        return build_trace_export(project_run(events), events, max_events=max_events)
 
     async def list_approvals(self, run_id: UUID) -> list[dict[str, JsonValue]]:
         await self.initialize()
