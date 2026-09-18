@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Bounded, redacted trace export: `GET /api/runs/{id}/export` returns a versioned
+  (`schema_version: "1"`) JSON document of a run's persisted events in sequence order, and
+  the run inspector console gains an "Export trace" download action. Sensitive payload keys
+  are recursively replaced with `[REDACTED]`; see `docs/security.md`.
 
 ## [1.0.0] - 2026-07-30
 

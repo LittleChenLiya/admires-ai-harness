@@ -207,3 +207,16 @@ class TraceSummary(StrictModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0, ge=0)
+
+
+class TraceExport(StrictModel):
+    """Versioned, bounded, redacted export of one run's persisted events."""
+
+    schema_version: Literal["1"] = "1"
+    run_id: UUID
+    trace_id: UUID
+    status: RunStatus
+    exported_at: datetime = Field(default_factory=utc_now)
+    event_count: int = Field(ge=0)
+    truncated: bool = False
+    events: list[RunEvent] = Field(default_factory=list)

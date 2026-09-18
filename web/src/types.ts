@@ -64,3 +64,14 @@ export interface Approval {
   decided: boolean;
   approved: boolean | null;
 }
+
+export interface TraceExport {
+  schema_version: "1";
+  run_id: string;
+  trace_id: string;
+  status: RunStatus;
+  exported_at: string;
+  event_count: number;
+  truncated: boolean;
+  events: RunEvent[];
+}

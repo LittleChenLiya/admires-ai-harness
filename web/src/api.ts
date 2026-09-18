@@ -1,4 +1,4 @@
-import type { Approval, Demo, Run, RunEvent } from "./types";
+import type { Approval, Demo, Run, RunEvent, TraceExport } from "./types";
 
 const API_ROOT = import.meta.env.VITE_API_ROOT ?? "/api";
 
@@ -37,6 +37,7 @@ export const api = {
     request<Run>(`/runs/${id}/resume`, { method: "POST" }),
   cancel: (id: string) =>
     request<Run>(`/runs/${id}/cancel`, { method: "POST" }),
+  exportTrace: (id: string) => request<TraceExport>(`/runs/${id}/export`),
 };
 
 export function streamUrl(runId: string, after: number): string {
