@@ -1,4 +1,4 @@
-import { Ban, RotateCcw } from "lucide-react";
+import { Ban, Download, RotateCcw } from "lucide-react";
 
 import type { Approval, Run, RunEvent } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
@@ -13,6 +13,7 @@ interface Props {
   onDecide: (requestId: string, approved: boolean) => Promise<void>;
   onResume: () => Promise<void>;
   onCancel: () => Promise<void>;
+  onExport: () => Promise<void>;
 }
 
 export function RunInspector({
@@ -22,6 +23,7 @@ export function RunInspector({
   onDecide,
   onResume,
   onCancel,
+  onExport,
 }: Props) {
   if (!run) {
     return (
@@ -55,6 +57,9 @@ export function RunInspector({
           <code>{run.id}</code>
         </div>
         <div className="run-actions">
+          <button type="button" onClick={() => void onExport()}>
+            <Download size={14} /> Export trace
+          </button>
           {canResume && (
             <button type="button" onClick={() => void onResume()}>
               <RotateCcw size={14} /> Resume

@@ -1,4 +1,4 @@
-import type { Approval, Demo, Run, RunEvent } from "./types";
+import type { Approval, Demo, Run, RunEvent, TraceExport } from "./types";
 
 const API_ROOT = import.meta.env.VITE_API_ROOT ?? "/api";
 
@@ -22,6 +22,7 @@ export const api = {
   runs: () => request<Run[]>("/runs"),
   run: (id: string) => request<Run>(`/runs/${id}`),
   events: (id: string) => request<RunEvent[]>(`/runs/${id}/events`),
+  exportTrace: (id: string) => request<TraceExport>(`/runs/${id}/export`),
   approvals: (id: string) => request<Approval[]>(`/runs/${id}/approvals`),
   start: (demo: string, input: string) =>
     request<Run>("/runs", {

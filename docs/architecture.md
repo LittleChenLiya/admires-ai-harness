@@ -59,6 +59,14 @@ capture state and the next node at a graph-node boundary. A compare-and-swap rev
 two workers from advancing the same run simultaneously. Replaying a run is read-only and
 never invokes a model or tool.
 
+`GET /api/runs/{id}/export` downloads a bounded, sequence-ordered JSON trace of the
+persisted events under an explicit `schema_version` envelope (`total_events`, `truncated`,
+`events`). Export is read-only like replay: it never invokes a model and never mutates the
+run. Sensitive payload fields are recursively redacted (see `docs/security.md`), and a
+`limit` query parameter (default 1000, maximum 10000) bounds the exported events, with
+`truncated: true` marking a partial export. Runs with no persisted events return 404, the
+same as unknown runs; failed and cancelled runs export normally.
+
 ## Graph semantics
 
 A `StateGraph` contains named asynchronous nodes and declared edges. `compile()` rejects an

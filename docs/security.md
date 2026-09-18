@@ -34,6 +34,11 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
 - Command execution uses a small allowlist and argument validation. There is no arbitrary
   shell tool in v1.
 - Tool output is bounded before it can enter model context or the event log.
+- Trace exports (`GET /api/runs/{id}/export`) are read-only and bounded: event payloads are
+  recursively redacted for credential-like keys (`api_key`, `token`, `secret`, `password`,
+  `authorization`, `credential`, `cookie`, and camelCase/snake_case variants) at any nesting
+  depth, replaced with `[REDACTED]`. Metric counters such as `input_tokens` are preserved.
+  Secrets deliberately placed in user content remain the operator's responsibility.
 - Child agents receive only explicitly delegated capabilities and cannot reserve more than
   the parent's remaining budget.
 - API errors and traces never include provider credentials. `.env` is ignored by Git.

@@ -10,13 +10,14 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from admires_harness.agents import list_demos
 from admires_harness.config import Settings
 from admires_harness.contracts import JsonValue, RunEvent
+from admires_harness.observability import DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT
 from admires_harness.services.runs import RunManager, as_camel
 
 
@@ -127,6 +128,23 @@ def create_app(settings: Settings | None = None, *, manager: RunManager | None =
             return await service.replay(_uuid(run_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
+
+    @app.get("/api/runs/{run_id}/export", tags=["runs"])
+    async def export_run(
+        run_id: str,
+        service: ManagerDependency,
+        limit: int = Query(default=DEFAULT_EXPORT_LIMIT, ge=1, le=MAX_EXPORT_LIMIT),
+    ) -> JSONResponse:
+        try:
+            export = await service.export_trace(_uuid(run_id), limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        return JSONResponse(
+            content=export.model_dump(mode="json"),
+            headers={
+                "Content-Disposition": f'attachment; filename="trace-{run_id}.json"',
+            },
+        )
 
     @app.get("/api/runs/{run_id}/stream", tags=["runs"])
     async def stream_run(
