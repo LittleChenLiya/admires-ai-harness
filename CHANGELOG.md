@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Offline, deterministic policy-wrapped MCP stdio example (`examples/mcp_policy_demo/`) with
+  a controlled local fixture server, a walkthrough guide (`docs/mcp-policy-example.md`), and
+  focused tests for allowlisting, namespacing, policy denial/approval, and normalized
+  failures.
 
 ## [1.0.0] - 2026-07-30
 

@@ -204,7 +204,8 @@ Install the optional transport with `uv sync --extra mcp`. Use
 matching `ToolSafetySpec` records, and wrap the returned executor in `SecuredToolExecutor`
 before injecting it into a graph. MCP is not auto-wired into the three demos: a server is
 untrusted code, and the adapter alone is not an authorization boundary. The exact extension
-steps are in [docs/extending.md](docs/extending.md).
+steps are in [docs/extending.md](docs/extending.md), and a runnable offline walkthrough is in
+[docs/mcp-policy-example.md](docs/mcp-policy-example.md).
 
 ## Quality gates
 
@@ -267,6 +268,7 @@ isolation.
 
 - [Architecture and runtime semantics](docs/architecture.md)
 - [Security model and residual risks](docs/security.md)
+- [Policy-wrapped MCP tool example](docs/mcp-policy-example.md)
 - [Evaluation methodology](docs/evaluation.md)
 - [Extension guide](docs/extending.md)
 - [Contributor quickstart](docs/contributor-quickstart.md)
