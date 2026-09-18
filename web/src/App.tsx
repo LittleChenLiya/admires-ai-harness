@@ -94,6 +94,24 @@ export function App() {
     await selectRun(selectedId);
   }
 
+  async function exportTrace() {
+    if (!selectedId) return;
+    try {
+      const trace = await api.exportTrace(selectedId);
+      const blob = new Blob([JSON.stringify(trace, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `trace-${selectedId}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
   return (
     <div className="app-shell">
       <Brand />
@@ -126,6 +144,7 @@ export function App() {
           onDecide={decide}
           onResume={() => act("resume")}
           onCancel={() => act("cancel")}
+          onExport={() => exportTrace()}
         />
       </main>
       <footer>

@@ -54,6 +54,17 @@ export interface RunEvent {
   payload: Record<string, unknown>;
 }
 
+export interface TraceExport {
+  schema_version: "1";
+  run_id: string;
+  trace_id: string;
+  status: RunStatus;
+  exported_at: string;
+  total_events: number;
+  truncated: boolean;
+  events: RunEvent[];
+}
+
 export interface Approval {
   requestId: string;
   toolName: string;

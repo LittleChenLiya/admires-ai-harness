@@ -23,7 +23,13 @@ from admires_harness.contracts import (
     utc_now,
 )
 from admires_harness.memory import RAGRetriever, SQLiteMemoryStore
-from admires_harness.observability import RunView, project_run
+from admires_harness.observability import (
+    DEFAULT_EXPORT_LIMIT,
+    RunView,
+    TraceExport,
+    build_trace_export,
+    project_run,
+)
 from admires_harness.runtime import CheckpointConflictError, GraphRuntime
 from admires_harness.safety import ApprovalGate, SafetyPolicy, SecuredToolExecutor, WorkspaceSandbox
 from admires_harness.storage import SQLiteCheckpointStore, SQLiteEventStore
@@ -225,6 +231,15 @@ class RunManager:
     async def list_events(self, run_id: UUID, *, after: int = -1) -> list[RunEvent]:
         await self.initialize()
         return await self.events.list(run_id, after=after)
+
+    async def export_trace(self, run_id: UUID, *, limit: int = DEFAULT_EXPORT_LIMIT) -> TraceExport:
+        """Read-only export of persisted events; never invokes a model or mutates a run."""
+
+        await self.initialize()
+        events = await self.events.list(run_id)
+        if not events:
+            raise KeyError(str(run_id))
+        return build_trace_export(events, limit=limit)
 
     async def wait(self, run_id: UUID) -> RunView:
         """Wait until this manager has finished its local work for a run.

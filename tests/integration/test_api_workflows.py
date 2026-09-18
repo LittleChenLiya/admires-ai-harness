@@ -287,6 +287,91 @@ async def test_sse_cursor_is_finite_for_terminal_run_and_missing_run_is_404(tmp_
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+async def test_trace_export_is_ordered_versioned_bounded_and_redacted(tmp_path: Path) -> None:
+    manager = RunManager(settings_for(tmp_path))
+    completed = await manager.run_sync("research", "Why use event sourcing?")
+    history = await manager.list_events(completed.run_id)
+    await manager.events.append(
+        RunEvent(
+            run_id=completed.run_id,
+            sequence=history[-1].sequence + 1,
+            type=EventType.LOG,
+            trace_id=history[0].trace_id,
+            payload={
+                "message": "sanitized",
+                "context": {"api_key": "sk-should-not-leak", "input_tokens": 7},
+            },
+        )
+    )
+    app = create_app(manager=manager)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=transport, base_url="http://test") as client,
+    ):
+        response = await client.get(f"/api/runs/{completed.run_id}/export")
+        assert response.status_code == 200
+        assert "attachment" in response.headers["content-disposition"]
+        export = response.json()
+        assert export["schema_version"] == "1"
+        assert export["status"] == "succeeded"
+        assert export["truncated"] is False
+        assert export["total_events"] == len(export["events"])
+        sequences = [event["sequence"] for event in export["events"]]
+        assert sequences == sorted(sequences)
+        context = export["events"][-1]["payload"]["context"]
+        assert context["api_key"] == "[REDACTED]"
+        assert context["input_tokens"] == 7
+        assert "sk-should-not-leak" not in response.text
+
+        bounded = (
+            await client.get(f"/api/runs/{completed.run_id}/export", params={"limit": 1})
+        ).json()
+        assert bounded["truncated"] is True
+        assert len(bounded["events"]) == 1
+        assert bounded["total_events"] == export["total_events"]
+
+        missing = await client.get("/api/runs/00000000-0000-0000-0000-000000000000/export")
+        assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_trace_export_covers_failed_runs_without_mutating_them(tmp_path: Path) -> None:
+    manager = RunManager(settings_for(tmp_path))
+    started = await manager.start("coding", "Create a slugify utility")
+    for _ in range(200):
+        pending = await manager.list_approvals(started.run_id)
+        if pending:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        raise AssertionError("coding run did not request approval")
+    request_id = pending[0]["requestId"]
+    assert isinstance(request_id, str)
+    failed = await manager.decide_approval(
+        started.run_id, UUID(request_id), approved=False, decided_by="integration-test"
+    )
+    assert failed.status is RunStatus.FAILED
+    before = await manager.list_events(started.run_id)
+
+    app = create_app(manager=manager)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=transport, base_url="http://test") as client,
+    ):
+        export = (await client.get(f"/api/runs/{started.run_id}/export")).json()
+
+    assert export["schema_version"] == "1"
+    assert export["status"] == "failed"
+    assert export["total_events"] == len(before)
+    after = await manager.list_events(started.run_id)
+    assert [event.event_id for event in after] == [event.event_id for event in before]
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_cancel_paused_run_survives_restart(tmp_path: Path) -> None:
     manager = RunManager(settings_for(tmp_path))
     started = await manager.start("coding", "Create a slugify utility")

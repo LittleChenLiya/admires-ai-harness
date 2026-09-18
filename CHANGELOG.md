@@ -6,7 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Trace export from the run inspector: `GET /api/runs/{id}/export` returns a bounded,
+  sequence-ordered JSON envelope with an explicit `schema_version`, recursive redaction of
+  credential-like payload fields, and a console "Export trace" download action.
 
 ## [1.0.0] - 2026-07-30
 
