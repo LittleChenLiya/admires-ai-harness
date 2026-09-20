@@ -37,6 +37,13 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
 - Child agents receive only explicitly delegated capabilities and cannot reserve more than
   the parent's remaining budget.
 - API errors and traces never include provider credentials. `.env` is ignored by Git.
+- Trace export (`GET /api/runs/{id}/export`) is read-only: it never invokes a model or
+  tool and never mutates run state. Payload keys whose normalized name contains a
+  credential marker (`api_key`, `token`, `secret`, `password`, `authorization`,
+  `credential`, `cookie`, `private_key`, `session_id`) are replaced with
+  `"[redacted]"` at any nesting depth before serialization. Redaction is
+  name-based, so secrets deliberately placed inside free-text user content can
+  still appear; do not paste credentials into task input.
 
 ## Threats and controls
 

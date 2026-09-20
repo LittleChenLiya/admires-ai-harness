@@ -23,7 +23,7 @@ from admires_harness.contracts import (
     utc_now,
 )
 from admires_harness.memory import RAGRetriever, SQLiteMemoryStore
-from admires_harness.observability import RunView, project_run
+from admires_harness.observability import RunView, TraceExport, build_trace_export, project_run
 from admires_harness.runtime import CheckpointConflictError, GraphRuntime
 from admires_harness.safety import ApprovalGate, SafetyPolicy, SecuredToolExecutor, WorkspaceSandbox
 from admires_harness.storage import SQLiteCheckpointStore, SQLiteEventStore
@@ -225,6 +225,22 @@ class RunManager:
     async def list_events(self, run_id: UUID, *, after: int = -1) -> list[RunEvent]:
         await self.initialize()
         return await self.events.list(run_id, after=after)
+
+    async def export_trace(self, run_id: UUID, *, limit: int = 1_000) -> TraceExport:
+        """Build a bounded, redacted export of a run's persisted events.
+
+        Read-only: never invokes a model or tool and never mutates run state.
+        A run with no persisted events (including a missing run) raises KeyError,
+        matching the behavior of get(). Failed runs export normally with their
+        recorded events.
+        """
+
+        await self.initialize()
+        events = await self.events.list(run_id)
+        if not events:
+            raise KeyError(str(run_id))
+        status = project_run(events).status.value
+        return build_trace_export(run_id, status, events, limit=limit)
 
     async def wait(self, run_id: UUID) -> RunView:
         """Wait until this manager has finished its local work for a run.

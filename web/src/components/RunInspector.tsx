@@ -1,4 +1,5 @@
-import { Ban, RotateCcw } from "lucide-react";
+import { Ban, Download, RotateCcw } from "lucide-react";
+import { useState } from "react";
 
 import type { Approval, Run, RunEvent } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
@@ -13,6 +14,7 @@ interface Props {
   onDecide: (requestId: string, approved: boolean) => Promise<void>;
   onResume: () => Promise<void>;
   onCancel: () => Promise<void>;
+  onExport: () => Promise<void>;
 }
 
 export function RunInspector({
@@ -22,7 +24,11 @@ export function RunInspector({
   onDecide,
   onResume,
   onCancel,
+  onExport,
 }: Props) {
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
   if (!run) {
     return (
       <section className="inspector panel empty-inspector">
@@ -44,6 +50,20 @@ export function RunInspector({
     "waiting_approval",
   ].includes(run.status);
 
+  async function exportTrace() {
+    setExporting(true);
+    setExportError(null);
+    try {
+      await onExport();
+    } catch (reason) {
+      setExportError(
+        reason instanceof Error ? reason.message : "Trace export failed",
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <section className="inspector panel" aria-labelledby="inspector-title">
       <div className="inspector-header">
@@ -55,6 +75,13 @@ export function RunInspector({
           <code>{run.id}</code>
         </div>
         <div className="run-actions">
+          <button
+            type="button"
+            onClick={() => void exportTrace()}
+            disabled={exporting}
+          >
+            <Download size={14} /> {exporting ? "Exporting…" : "Export"}
+          </button>
           {canResume && (
             <button type="button" onClick={() => void onResume()}>
               <RotateCcw size={14} /> Resume
@@ -67,6 +94,11 @@ export function RunInspector({
           )}
         </div>
       </div>
+      {exportError && (
+        <p className="export-error" role="alert">
+          {exportError}
+        </p>
+      )}
       <MetricStrip metrics={run.metrics} />
       {approvals.map((approval) => (
         <ApprovalCard

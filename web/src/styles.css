@@ -664,6 +664,16 @@ textarea {
   font-size: 11px;
   line-height: 1.7;
 }
+.export-error {
+  margin: 12px 22px 0;
+  padding: 8px 12px;
+  border: 1px solid #58302f;
+  border-radius: 6px;
+  background: #241415;
+  color: #ffd1cf;
+  font-size: 11px;
+}
+
 .global-error {
   margin-top: 14px;
   display: flex;

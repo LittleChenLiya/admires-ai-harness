@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Bounded, schema-versioned (`trace-export/1`) JSON trace export at
+  `GET /api/runs/{id}/export` with recursive credential redaction, plus an
+  Export action in the run inspector console. Export is read-only: it never
+  invokes a model and never mutates run state.
 
 ## [1.0.0] - 2026-07-30
 

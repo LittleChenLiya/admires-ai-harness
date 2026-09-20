@@ -1,4 +1,4 @@
-"""FastAPI surface for runs, replay, approvals, and live events."""
+"""FastAPI surface for runs, replay, approvals, export, and live events."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from admires_harness.agents import list_demos
 from admires_harness.config import Settings
 from admires_harness.contracts import JsonValue, RunEvent
+from admires_harness.observability import TraceExport
+from admires_harness.observability.export import DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT
 from admires_harness.services.runs import RunManager, as_camel
 
 
@@ -125,6 +127,25 @@ def create_app(settings: Settings | None = None, *, manager: RunManager | None =
     async def replay_run(run_id: str, service: ManagerDependency) -> dict[str, JsonValue]:
         try:
             return await service.replay(_uuid(run_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+
+    @app.get("/api/runs/{run_id}/export", tags=["runs"])
+    async def export_run(
+        run_id: str,
+        service: ManagerDependency,
+        limit: int = Query(default=DEFAULT_EXPORT_LIMIT, ge=1, le=MAX_EXPORT_LIMIT),
+    ) -> TraceExport:
+        """Download a bounded, redacted JSON export of a run's persisted events.
+
+        The document is schema-versioned and preserves event sequence order.
+        Exporting is read-only: it never invokes a model and never mutates run
+        state. A run with no persisted events (including a missing run) is a 404;
+        failed runs export normally.
+        """
+
+        try:
+            return await service.export_trace(_uuid(run_id), limit=limit)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
 
