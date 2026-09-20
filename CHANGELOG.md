@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Uniform CLI output contract for `demo`, `evaluate`, `list`, and `dev`: single-document
+  JSON on stdout, human output and errors on stderr, documented 0/1/2 exit codes, clean
+  baseline-regression reporting with a new `evaluate --comparison` option, and recursive
+  redaction of secret-looking keys so sensitive settings are never printed.
 
 ## [1.0.0] - 2026-07-30
 

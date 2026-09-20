@@ -94,6 +94,26 @@ collaboration  succeeded   5 steps   3 model calls  0 tool calls   $0.0000
 The checked-in three-case benchmark currently produces `3/3` passing cases, `100%` pass
 rate, and `$0.00` cost on the mock provider. Exact latency is machine-dependent.
 
+## CLI output contract
+
+Every `admire` command follows the same rules so terminals and scripts can both rely on it:
+
+- **JSON on stdout only.** `demo --json`, `list --json`, `dev --json`, and `evaluate`
+  (always JSON) print exactly one UTF-8 JSON document to stdout. Human panels, tables, and
+  diagnostics go to stderr in JSON mode, so long or Unicode output never corrupts the payload.
+- **Exit codes.** `0` success; `1` business failure (a run or benchmark failed, a baseline
+  regression was detected, or a report could not be written); `2` usage errors (unknown
+  workflow, missing or invalid dataset/baseline paths, out-of-range options).
+- **Errors read clean.** Failures print a single `error: ...` line to stderr, never a
+  traceback, and stdout stays parseable even when a later step (for example `--report`)
+  fails.
+- **Baseline regressions.** `evaluate --baseline report.json` compares against a saved
+  report, prints each regression (`case_id`, kind, reason) to stderr, exits `1`, and can
+  persist the machine-readable comparison via `--comparison comparison.json`.
+- **No secrets.** Sensitive settings such as `ADMIRE_MODEL_API_KEY` are never printed;
+  report environments are whitelisted to non-sensitive metadata and JSON payloads are
+  scrubbed of secret-looking keys.
+
 ## Architecture
 
 ```mermaid
