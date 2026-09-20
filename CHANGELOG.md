@@ -6,7 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Custom graph guide (`docs/custom-graphs.md`) and an executable offline example
+  (`examples/custom_graph.py`) showing a conditional graph on the deterministic mock model,
+  with unit tests covering both branches and failure paths.
 
 ## [1.0.0] - 2026-07-30
 
