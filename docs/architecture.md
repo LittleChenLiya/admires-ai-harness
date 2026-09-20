@@ -69,10 +69,15 @@ overwrite. Conditional edges route against that new state. Applications that nee
 aggregation must compute it inside a node; pluggable reducers are outside the v1 contract.
 
 Runs have explicit terminal states. Step, token, cost, repeated-action, and wall-clock budgets
-are enforced by the runtime rather than delegated to a prompt. A child agent has its own run
-ID and cancellation domain, shares the parent trace ID, and can only reserve a budget within
-the parent's remaining budget. Its dependency/capability map is explicitly delegated by the
-parent graph. Its failure is data that the parent must handle explicitly.
+are enforced by the runtime rather than delegated to a prompt. A child agent is an
+independent run: it gets fresh run and trace IDs, carries `parent_run_id` back to its
+parent, and can only reserve a budget within the parent's remaining budget. Its
+dependency/capability map is explicitly delegated by the parent graph. The parent records an
+`agent.delegated` event before the child starts and always pairs it with exactly one
+`agent.joined` event, whether the child succeeds, fails, times out, or is cancelled. The
+join folds the child's metered usage into the parent's totals exactly once, so a resumed
+parent cannot spend the child's budget a second time. A child's terminal state never becomes
+the parent's terminal state; its failure is data that the parent must handle explicitly.
 
 ## Side effects and recovery
 

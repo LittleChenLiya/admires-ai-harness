@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- Child runs delegated through `NodeContext.delegate` now mint their own run and trace
+  IDs, link back via `parent_run_id`, and always pair `agent.delegated` with a terminal
+  `agent.joined` event on success, failure, timeout, or cancellation. Child usage is
+  folded into the parent's budget exactly once, including across pause/resume.
 
 ## [1.0.0] - 2026-07-30
 

@@ -35,7 +35,8 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
   shell tool in v1.
 - Tool output is bounded before it can enter model context or the event log.
 - Child agents receive only explicitly delegated capabilities and cannot reserve more than
-  the parent's remaining budget.
+  the parent's remaining budget. Every delegation is paired with a terminal
+  `agent.joined` event, and the child's usage is charged to the parent exactly once.
 - API errors and traces never include provider credentials. `.env` is ignored by Git.
 
 ## Threats and controls

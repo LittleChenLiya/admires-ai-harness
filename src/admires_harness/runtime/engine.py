@@ -40,6 +40,11 @@ class _BudgetExceeded(Exception):
     pass
 
 
+def _int_metric(payload: Mapping[str, object], key: str) -> int:
+    value = payload.get(key)
+    return value if isinstance(value, int) else 0
+
+
 @dataclass(slots=True)
 class _Metrics:
     steps: int = 0
@@ -386,15 +391,25 @@ class GraphRuntime:
                 raise ValueError(f"unknown child capabilities: {', '.join(unknown)}")
             child_budget, reservation = await self._reserve_child_budget(session, budget)
             child_id = uuid4()
-            await session.emit(
-                EventType.AGENT_DELEGATED,
-                {
-                    "child_run_id": str(child_id),
-                    "graph_name": child_graph.name,
-                    "label": label,
-                    "capabilities": list(requested_capabilities),
-                },
-            )
+            # A child run is an independent run: fresh run and trace identifiers,
+            # linked back to the parent only through parent_run_id and the
+            # agent.delegated/agent.joined event pair on the parent stream.
+            child_trace_id = uuid4()
+            try:
+                await session.emit(
+                    EventType.AGENT_DELEGATED,
+                    {
+                        "child_run_id": str(child_id),
+                        "child_trace_id": str(child_trace_id),
+                        "graph_name": child_graph.name,
+                        "label": label,
+                        "capabilities": list(requested_capabilities),
+                    },
+                )
+            except BaseException:
+                # Never leak a reservation when the delegation cannot be recorded.
+                await self._release_child_budget(session, reservation, None)
+                raise
             try:
                 child_runtime = GraphRuntime(
                     event_store=self.event_store,
@@ -407,29 +422,23 @@ class GraphRuntime:
                     state,
                     budget=child_budget,
                     run_id=child_id,
-                    trace_id=session.trace_id,
+                    trace_id=child_trace_id,
                     parent_run_id=session.run_id,
                 )
+            except asyncio.CancelledError:
+                # The child run has already converged to cancelled in its own
+                # event stream. Pair the delegation with a terminal join so the
+                # parent never treats the child state as its own, then let the
+                # cancellation propagate to the parent's driver.
+                await self._release_child_budget(session, reservation, None)
+                await self._emit_agent_joined(session, child_id, label, RunStatus.CANCELLED, None)
+                raise
             except BaseException:
                 await self._release_child_budget(session, reservation, None)
+                await self._emit_agent_joined(session, child_id, label, RunStatus.FAILED, None)
                 raise
             await self._release_child_budget(session, reservation, result)
-            await session.emit(
-                EventType.AGENT_JOINED,
-                {
-                    "child_run_id": str(child_id),
-                    "status": result.status.value,
-                    "label": label,
-                    "metrics": {
-                        "steps": result.steps,
-                        "model_calls": result.model_calls,
-                        "tool_calls": result.tool_calls,
-                        "input_tokens": result.input_tokens,
-                        "output_tokens": result.output_tokens,
-                        "cost_usd": result.cost_usd,
-                    },
-                },
-            )
+            await self._emit_agent_joined(session, child_id, label, result.status, result)
             return result
 
         context = NodeContext.create(
@@ -576,7 +585,44 @@ class GraphRuntime:
             session.reserved_steps += reservation[0]
             session.reserved_tokens += reservation[1]
             session.reserved_cost_usd += reservation[2]
-            return child, reservation
+        return child, reservation
+
+    @staticmethod
+    async def _emit_agent_joined(
+        session: _Session,
+        child_id: UUID,
+        label: str | None,
+        status: RunStatus,
+        result: RunResult | None,
+    ) -> None:
+        metrics: dict[str, JsonValue]
+        if result is None:
+            metrics = {
+                "steps": 0,
+                "model_calls": 0,
+                "tool_calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+            }
+        else:
+            metrics = {
+                "steps": result.steps,
+                "model_calls": result.model_calls,
+                "tool_calls": result.tool_calls,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "cost_usd": result.cost_usd,
+            }
+        await session.emit(
+            EventType.AGENT_JOINED,
+            {
+                "child_run_id": str(child_id),
+                "status": status.value,
+                "label": label,
+                "metrics": metrics,
+            },
+        )
 
     async def _release_child_budget(
         self,
@@ -693,6 +739,20 @@ class GraphRuntime:
     def _metrics_from_events(events: list[RunEvent]) -> _Metrics:
         metrics = _Metrics()
         for event in events:
+            if event.type == EventType.AGENT_JOINED:
+                # Child usage is folded into the parent's live metrics when the
+                # child joins; rebuild the same totals from the durable event so
+                # a resumed parent cannot spend the child's budget a second time.
+                joined = event.payload.get("metrics")
+                if isinstance(joined, dict):
+                    metrics.steps += _int_metric(joined, "steps")
+                    metrics.model_calls += _int_metric(joined, "model_calls")
+                    metrics.tool_calls += _int_metric(joined, "tool_calls")
+                    metrics.input_tokens += _int_metric(joined, "input_tokens")
+                    metrics.output_tokens += _int_metric(joined, "output_tokens")
+                    cost = joined.get("cost_usd")
+                    metrics.cost_usd += cost if isinstance(cost, (int, float)) else 0.0
+                continue
             if event.type != EventType.NODE_COMPLETED:
                 continue
             usage = event.payload.get("usage")
