@@ -19,6 +19,15 @@ class SecuredToolExecutor:
     handed directly to a model-facing agent. Approval consumption happens immediately
     before execution. If a process crashes after consumption but during the tool call, the
     stable idempotency key is the recovery mechanism; the approval must not be replayed.
+
+    Every outcome maps to a stable error code so callers can distinguish policy denials
+    ("policy_denied"), missing approvals ("approval_required"), approval failures
+    ("approval_<reason>" such as "approval_expired" or "approval_already_consumed"), and
+    handler failures ("tool_execution_failed"). Exceptions raised by the underlying
+    executor are converted into failed results: they never bypass the policy checks and
+    never surface as an ambiguous success.
+    Unexpected approval-gate failures fail closed as "approval_error" instead of
+    propagating, so a gate defect can never reach the tool handler.
     """
 
     def __init__(
@@ -75,12 +84,28 @@ class SecuredToolExecutor:
                     content=str(error),
                     error_code=f"approval_{error.code}",
                 )
+            except Exception as exc:
+                # Fail closed: an unexpected gate failure (for example arguments that
+                # cannot be hashed into a digest) must never reach the tool handler.
+                return ToolResult(ok=False, content=str(exc), error_code="approval_error")
             approval_consumed = True
         try:
             self._policy.authorize(call.name, approval_consumed=approval_consumed)
         except PolicyViolation as error:
             return ToolResult(ok=False, content=error.reason, error_code="policy_denied")
-        return await self._executor.execute(call, run_id=run_id, idempotency_key=idempotency_key)
+        try:
+            return await self._executor.execute(
+                call, run_id=run_id, idempotency_key=idempotency_key
+            )
+        except Exception as exc:
+            # The approval (if any) stays consumed: one-shot semantics are preserved and
+            # the caller receives an explicit failure instead of a propagating exception
+            # that could be mistaken for a lost or successful execution.
+            return ToolResult(
+                ok=False,
+                content=str(exc),
+                error_code="tool_execution_failed",
+            )
 
     @staticmethod
     def _json_arguments(arguments: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:

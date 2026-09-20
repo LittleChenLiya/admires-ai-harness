@@ -162,9 +162,12 @@ class ApprovalGate:
                 # failed persistence callback prevents execution and fails closed.
                 try:
                     await on_consumed(consumed)
-                except Exception:
+                except Exception as exc:
                     self._requests[request_id] = request
-                    raise
+                    raise ApprovalError(
+                        "callback_failed",
+                        "approval consumption callback failed; consumption rolled back",
+                    ) from exc
             return decision
 
     async def get(self, request_id: UUID) -> tuple[ApprovalRequest, ApprovalDecision | None] | None:

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from admires_harness.contracts import (
     ApprovalDecision,
+    ApprovalRequest,
     RiskLevel,
     SideEffect,
     ToolCall,
@@ -282,3 +284,360 @@ async def test_secured_executor_denies_unknown_and_requires_valid_approval() -> 
     assert result.ok and result.receipt == "receipt-1"
     assert replay.error_code == "approval_already_consumed"
     assert backend.calls == [call]
+
+
+class StubExecutor:
+    """Deterministic executor double with scripted results and event recording."""
+
+    def __init__(
+        self,
+        results: list[ToolResult] | None = None,
+        error: Exception | None = None,
+        events: list[str] | None = None,
+    ) -> None:
+        self.calls: list[ToolCall] = []
+        self._results = list(results or [])
+        self._error = error
+        self._events = events
+
+    def schemas(self) -> list[dict[str, object]]:
+        return []
+
+    async def execute(self, call: ToolCall, *, run_id: UUID, idempotency_key: str) -> ToolResult:
+        del run_id, idempotency_key
+        self.calls.append(call)
+        if self._events is not None:
+            self._events.append("handler")
+        if self._error is not None:
+            raise self._error
+        if self._results:
+            return self._results.pop(0)
+        return ToolResult(ok=True, content="done", receipt="receipt-1")
+
+
+def _write_call(**arguments: object) -> ToolCall:
+    return ToolCall(name="write", arguments=arguments or {"path": "report.md"})  # type: ignore[arg-type]
+
+
+def _secured(
+    backend: StubExecutor, gate: ApprovalGate | None = None
+) -> tuple[SecuredToolExecutor, ApprovalGate]:
+    gate = gate or ApprovalGate()
+    policy = SafetyPolicy([ToolSafetySpec(name="write", side_effect=SideEffect.WRITE)])
+    return SecuredToolExecutor(backend, policy=policy, approvals=gate), gate
+
+
+async def _approved_request(
+    gate: ApprovalGate,
+    run_id: UUID,
+    call: ToolCall,
+    *,
+    checkpoint_revision: int = 3,
+    approved: bool = True,
+) -> ApprovalRequest:
+    request = await gate.create(
+        run_id=run_id,
+        checkpoint_revision=checkpoint_revision,
+        tool_name=call.name,
+        arguments=call.arguments,
+        reason="write the report",
+        risk=RiskLevel.MEDIUM,
+    )
+    await gate.resolve(
+        ApprovalDecision(request_id=request.request_id, approved=approved, decided_by="reviewer")
+    )
+    return request
+
+
+@pytest.mark.asyncio
+async def test_secured_executor_consumes_approval_once_before_handler() -> None:
+    events: list[str] = []
+    backend = StubExecutor(events=events)
+    executor, gate = _secured(backend)
+    run_id = uuid4()
+    call = _write_call()
+    request = await _approved_request(gate, run_id, call)
+
+    async def on_consumed(consumed: ApprovalRequest) -> None:
+        events.append("consumed")
+
+    result = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="approved",
+        checkpoint_revision=3,
+        approval_request_id=request.request_id,
+        on_approval_consumed=on_consumed,
+    )
+    replay = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="replay",
+        checkpoint_revision=3,
+        approval_request_id=request.request_id,
+    )
+
+    assert result.ok and result.receipt == "receipt-1"
+    assert replay.error_code == "approval_already_consumed"
+    assert events == ["consumed", "handler"]
+    assert backend.calls == [call]
+
+
+@pytest.mark.asyncio
+async def test_secured_executor_without_approval_never_calls_handler() -> None:
+    backend = StubExecutor()
+    executor, _ = _secured(backend)
+
+    result = await executor.execute(_write_call(), run_id=uuid4(), idempotency_key="no-approval")
+
+    assert result.error_code == "approval_required"
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override, expected_code",
+    [
+        ({"run_id": "other-run"}, "approval_binding_mismatch"),
+        ({"checkpoint_revision": 4}, "approval_binding_mismatch"),
+        ({"arguments": {"path": "other.md"}}, "approval_binding_mismatch"),
+        ({"request_id": "other-request"}, "approval_not_found"),
+    ],
+)
+async def test_secured_executor_rejects_changed_approval_binding(
+    override: dict[str, object], expected_code: str
+) -> None:
+    backend = StubExecutor()
+    executor, gate = _secured(backend)
+    run_id = uuid4()
+    call = _write_call()
+    request = await _approved_request(gate, run_id, call)
+
+    binding: dict[str, object] = {
+        "run_id": run_id,
+        "checkpoint_revision": 3,
+        "approval_request_id": request.request_id,
+    }
+    binding.update(
+        {
+            "run_id": uuid4() if override.get("run_id") == "other-run" else binding["run_id"],
+            "checkpoint_revision": override.get("checkpoint_revision", 3),
+            "approval_request_id": (
+                uuid4() if override.get("request_id") == "other-request" else request.request_id
+            ),
+        }
+    )
+    changed_call = _write_call(**override.get("arguments", call.arguments))  # type: ignore[arg-type]
+
+    rejected = await executor.execute(
+        changed_call,
+        idempotency_key="changed",
+        **binding,  # type: ignore[arg-type]
+    )
+
+    assert rejected.error_code == expected_code
+    assert backend.calls == []
+    # The failed attempt must not consume the approval: the original binding still works.
+    if expected_code == "approval_binding_mismatch":
+        recovered = await executor.execute(
+            call,
+            run_id=run_id,
+            idempotency_key="recovered",
+            checkpoint_revision=3,
+            approval_request_id=request.request_id,
+        )
+        assert recovered.ok
+        assert backend.calls == [call]
+
+
+@pytest.mark.asyncio
+async def test_secured_executor_maps_denied_and_expired_approvals() -> None:
+    backend = StubExecutor()
+    executor, gate = _secured(backend)
+    run_id = uuid4()
+    call = _write_call()
+
+    denied = await _approved_request(gate, run_id, call, approved=False)
+    denied_result = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="denied",
+        checkpoint_revision=3,
+        approval_request_id=denied.request_id,
+    )
+    assert denied_result.error_code == "approval_denied"
+
+    current = datetime(2026, 1, 1, tzinfo=UTC)
+    expiring_gate = ApprovalGate(ttl=timedelta(seconds=1), clock=lambda: current)
+    expiring_executor, _ = _secured(backend, expiring_gate)
+    stale = await _approved_request(expiring_gate, run_id, call)
+    current += timedelta(seconds=2)
+    expired_result = await expiring_executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="expired",
+        checkpoint_revision=3,
+        approval_request_id=stale.request_id,
+    )
+    assert expired_result.error_code == "approval_expired"
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_secured_executor_handler_exception_keeps_approval_consumed() -> None:
+    backend = StubExecutor(error=RuntimeError("disk full"))
+    executor, gate = _secured(backend)
+    run_id = uuid4()
+    call = _write_call()
+    request = await _approved_request(gate, run_id, call)
+
+    failed = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="failing",
+        checkpoint_revision=3,
+        approval_request_id=request.request_id,
+    )
+    replay = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="replay",
+        checkpoint_revision=3,
+        approval_request_id=request.request_id,
+    )
+
+    assert failed.error_code == "tool_execution_failed"
+    assert "disk full" in failed.content
+    # One-shot semantics: the crash after consumption must not replay the approval.
+    assert replay.error_code == "approval_already_consumed"
+    assert backend.calls == [call]
+
+
+@pytest.mark.asyncio
+async def test_secured_executor_passes_through_retryable_failure() -> None:
+    backend = StubExecutor(
+        results=[
+            ToolResult(ok=False, content="busy", error_code="rate_limited", retryable=True),
+            ToolResult(ok=True, content="done", receipt="receipt-2"),
+        ]
+    )
+    executor, gate = _secured(backend)
+    run_id = uuid4()
+    call = _write_call()
+
+    first_request = await _approved_request(gate, run_id, call)
+    first = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="attempt-1",
+        checkpoint_revision=3,
+        approval_request_id=first_request.request_id,
+    )
+    second_request = await _approved_request(gate, run_id, call)
+    second = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="attempt-2",
+        checkpoint_revision=3,
+        approval_request_id=second_request.request_id,
+    )
+
+    assert first.error_code == "rate_limited" and first.retryable
+    assert second.ok and second.receipt == "receipt-2"
+    assert backend.calls == [call, call]
+
+
+@pytest.mark.asyncio
+async def test_secured_executor_rolls_back_consumption_when_callback_fails() -> None:
+    backend = StubExecutor()
+    executor, gate = _secured(backend)
+    run_id = uuid4()
+    call = _write_call()
+    request = await _approved_request(gate, run_id, call)
+
+    async def failing_callback(consumed: ApprovalRequest) -> None:
+        raise RuntimeError("event store unavailable")
+
+    failed = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="callback-fails",
+        checkpoint_revision=3,
+        approval_request_id=request.request_id,
+        on_approval_consumed=failing_callback,
+    )
+
+    assert failed.error_code == "approval_callback_failed"
+    assert backend.calls == []
+    # The rollback means the same approval can still authorize the retried execution.
+    events: list[str] = []
+
+    async def recording_callback(consumed: ApprovalRequest) -> None:
+        events.append("consumed")
+
+    recovered = await executor.execute(
+        call,
+        run_id=run_id,
+        idempotency_key="callback-recovered",
+        checkpoint_revision=3,
+        approval_request_id=request.request_id,
+        on_approval_consumed=recording_callback,
+    )
+    assert recovered.ok
+    assert events == ["consumed"]
+    assert backend.calls == [call]
+
+
+@pytest.mark.asyncio
+async def test_secured_executor_concurrent_execute_consumes_exactly_once() -> None:
+    backend = StubExecutor()
+    executor, gate = _secured(backend)
+    run_id = uuid4()
+    call = _write_call()
+    request = await _approved_request(gate, run_id, call)
+
+    first, second = await asyncio.gather(
+        executor.execute(
+            call,
+            run_id=run_id,
+            idempotency_key="concurrent-1",
+            checkpoint_revision=3,
+            approval_request_id=request.request_id,
+        ),
+        executor.execute(
+            call,
+            run_id=run_id,
+            idempotency_key="concurrent-2",
+            checkpoint_revision=3,
+            approval_request_id=request.request_id,
+        ),
+    )
+
+    outcomes = sorted(
+        ("ok" if result.ok else result.error_code or "") for result in (first, second)
+    )
+    assert outcomes == ["approval_already_consumed", "ok"]
+    assert len(backend.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_secured_executor_fails_closed_on_unexpected_gate_error() -> None:
+    backend = StubExecutor()
+    executor, gate = _secured(backend)
+    run_id = uuid4()
+    call = _write_call(path="report.md")
+    request = await _approved_request(gate, run_id, call)
+    # NaN cannot be hashed into the canonical arguments digest, so the gate raises an
+    # unexpected ValueError. The executor must fail closed instead of propagating it.
+    poisoned = ToolCall(name="write", arguments={"path": float("nan")})
+
+    result = await executor.execute(
+        poisoned,
+        run_id=run_id,
+        idempotency_key="poisoned",
+        checkpoint_revision=3,
+        approval_request_id=request.request_id,
+    )
+
+    assert result.error_code == "approval_error"
+    assert backend.calls == []

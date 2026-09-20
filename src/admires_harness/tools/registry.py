@@ -95,7 +95,10 @@ class ToolRegistry:
             result = await raw if isinstance(raw, Awaitable) else raw
         except Exception as exc:
             return ToolResult(ok=False, content=str(exc), error_code="tool_execution_failed")
-        if definition.safety.side_effect not in {SideEffect.NONE, SideEffect.READ}:
+        if result.ok and definition.safety.side_effect not in {SideEffect.NONE, SideEffect.READ}:
+            # Only successful side effects earn a receipt. Caching a failure would poison
+            # the idempotency key and make a legitimate retry of a retryable failure
+            # impossible without ever re-running the handler.
             receipt = result.receipt or f"sha256:{digest}"
             result = result.model_copy(update={"receipt": receipt})
             self._receipts[key] = (digest, result)

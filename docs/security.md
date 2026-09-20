@@ -25,6 +25,17 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
   that exception must be expressed in tool metadata rather than hidden in a prompt.
 - Approvals are tied to exact arguments, the run ID, tool name, and current checkpoint.
 - Approvals expire and are consumed once. A stale or replayed decision fails closed.
+- `SecuredToolExecutor` maps every outcome to a stable error code: `policy_denied` for
+  policy rejections, `approval_required` when a decision is missing, `approval_<reason>`
+  (for example `approval_expired`, `approval_denied`, `approval_binding_mismatch`,
+  `approval_already_consumed`, or `approval_callback_failed`) for approval failures,
+  `approval_error` for unexpected gate defects, and `tool_execution_failed` for handler
+  exceptions. Handler exceptions never bypass the policy checks and never surface as an
+  ambiguous success; a failed consumption callback rolls the consumption back so the
+  approval is not burned without execution, while a consumed approval stays consumed even
+  if the handler later fails.
+- Only successful side effects earn an idempotency receipt. A failed (including retryable)
+  result is never cached, so the same idempotency key can legitimately retry the handler.
 - If a process exits after recording an approval decision but before resuming the run, the
   resolved-but-unconsumed request stays visible and the same decision can resume it without
   creating a second decision event. The opposite decision is rejected.

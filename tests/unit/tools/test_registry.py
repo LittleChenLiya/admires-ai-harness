@@ -1,10 +1,12 @@
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
-from admires_harness.contracts import ToolCall
-from admires_harness.safety import WorkspaceSandbox
+from admires_harness.contracts import SideEffect, ToolCall, ToolResult
+from admires_harness.safety import ToolSafetySpec, WorkspaceSandbox
 from admires_harness.tools import workspace_tools
+from admires_harness.tools.registry import ToolDefinition, ToolRegistry
 
 
 @pytest.mark.asyncio
@@ -69,3 +71,43 @@ async def test_read_list_search_and_unknown_tool(tmp_path):
     assert listed.ok and "notes.txt" in listed.content
     assert searched.ok and "checkpoints" in searched.content
     assert unknown.error_code == "unknown_tool"
+
+
+class _EmptyInput(BaseModel):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_retryable_failure_is_not_cached_and_can_be_retried():
+    attempts = 0
+
+    def flaky(arguments: BaseModel) -> ToolResult:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return ToolResult(ok=False, content="busy", error_code="busy", retryable=True)
+        return ToolResult(ok=True, content="done")
+
+    registry = ToolRegistry(
+        [
+            ToolDefinition(
+                "flaky.write",
+                "Fails once, then succeeds.",
+                _EmptyInput,
+                ToolSafetySpec(name="flaky.write", side_effect=SideEffect.WRITE),
+                flaky,
+            )
+        ]
+    )
+    run_id = uuid4()
+    call = ToolCall(name="flaky.write", arguments={})
+
+    first = await registry.execute(call, run_id=run_id, idempotency_key="stable")
+    retried = await registry.execute(call, run_id=run_id, idempotency_key="stable")
+    replayed = await registry.execute(call, run_id=run_id, idempotency_key="stable")
+
+    assert first.error_code == "busy" and first.retryable
+    # A failed side effect earns no receipt, so the same key re-runs the handler.
+    assert retried.ok and retried.receipt
+    assert replayed == retried
+    assert attempts == 2
