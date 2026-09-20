@@ -70,6 +70,31 @@ class Plan(StrictModel):
         return tuple(ordered)
 
 
+def _first_leaf_error(grouped: BaseExceptionGroup[BaseException]) -> BaseException:
+    """Unwrap a task-group failure to the first meaningful exception.
+
+    TaskGroup records sibling cancellations as ``CancelledError`` alongside the
+    originating failure. The cancellation is a consequence, never the cause, so a
+    concrete non-cancellation error is preferred when present. This keeps the
+    parent's failure status stable regardless of group ordering.
+    """
+
+    leaves: list[BaseException] = []
+
+    def collect(group: BaseExceptionGroup[BaseException]) -> None:
+        for error in group.exceptions:
+            if isinstance(error, BaseExceptionGroup):
+                collect(error)
+            else:
+                leaves.append(error)
+
+    collect(grouped)
+    for error in leaves:
+        if not isinstance(error, asyncio.CancelledError):
+            return error
+    return leaves[0] if leaves else grouped
+
+
 async def execute_plan(
     context: NodeContext,
     plan: Plan,
@@ -150,7 +175,16 @@ async def execute_plan(
                 continue
             blocked = ", ".join(sorted(pending))
             raise DelegationError(f"plan cannot make progress; blocked steps: {blocked}")
-        batch = await asyncio.gather(*(run_step(step) for step in ready))
+        # Structured concurrency: a failing or cancelled step must cancel and await
+        # every sibling so no child run leaks past the parent's terminal event.
+        tasks: list[asyncio.Task[tuple[str, JsonValue, str | None]]] = []
+        try:
+            async with asyncio.TaskGroup() as group:
+                for step in ready:
+                    tasks.append(group.create_task(run_step(step)))
+        except BaseExceptionGroup as grouped:
+            raise _first_leaf_error(grouped) from None
+        batch = [task.result() for task in tasks]
         for step_id, output, error in batch:
             pending.remove(step_id)
             if error is None:

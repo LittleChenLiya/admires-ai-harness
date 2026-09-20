@@ -70,9 +70,17 @@ aggregation must compute it inside a node; pluggable reducers are outside the v1
 
 Runs have explicit terminal states. Step, token, cost, repeated-action, and wall-clock budgets
 are enforced by the runtime rather than delegated to a prompt. A child agent has its own run
-ID and cancellation domain, shares the parent trace ID, and can only reserve a budget within
-the parent's remaining budget. Its dependency/capability map is explicitly delegated by the
-parent graph. Its failure is data that the parent must handle explicitly.
+ID and trace ID, plus its own cancellation domain. It is linked back to the caller through
+`parent_run_id` and the parent stream's paired `agent.delegated`/`agent.joined` events, which
+carry both child identifiers. A child can only reserve a budget within the parent's remaining
+budget: an explicitly requested child budget is held for that child, while a child that omits
+the budget inherits the parent's remaining cap and is charged on join, allowing concurrent
+children. Its dependency/capability map is explicitly delegated by the parent graph, so a child
+never sees a capability it was not granted. Success, failure, cancellation, timeout, and budget
+exhaustion all converge into a `RunResult`; the child status is data the parent handles
+explicitly and never becomes the parent's own terminal status. Child usage folds into the parent
+metrics exactly once at join time, and a resumed parent rebuilds the same totals from
+`agent.joined` payloads.
 
 ## Side effects and recovery
 

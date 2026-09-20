@@ -386,50 +386,89 @@ class GraphRuntime:
                 raise ValueError(f"unknown child capabilities: {', '.join(unknown)}")
             child_budget, reservation = await self._reserve_child_budget(session, budget)
             child_id = uuid4()
-            await session.emit(
-                EventType.AGENT_DELEGATED,
-                {
-                    "child_run_id": str(child_id),
-                    "graph_name": child_graph.name,
-                    "label": label,
-                    "capabilities": list(requested_capabilities),
-                },
+            # A child run is an independent run: fresh run and trace identifiers,
+            # linked back to the parent only through parent_run_id and the
+            # agent.delegated/agent.joined event pair on the parent stream.
+            child_trace_id = uuid4()
+            try:
+                await session.emit(
+                    EventType.AGENT_DELEGATED,
+                    {
+                        "child_run_id": str(child_id),
+                        "child_trace_id": str(child_trace_id),
+                        "graph_name": child_graph.name,
+                        "label": label,
+                        "capabilities": list(requested_capabilities),
+                        "budget": child_budget.model_dump(mode="json"),
+                    },
+                )
+            except BaseException:
+                # Never leak a reservation when the delegation cannot be recorded.
+                await self._release_child_budget(session, reservation, None)
+                raise
+            child_runtime = GraphRuntime(
+                event_store=self.event_store,
+                checkpoint_store=self.checkpoint_store,
+                dependencies={name: self.dependencies[name] for name in requested_capabilities},
+                broker=self.broker,
             )
             try:
-                child_runtime = GraphRuntime(
-                    event_store=self.event_store,
-                    checkpoint_store=self.checkpoint_store,
-                    dependencies={name: self.dependencies[name] for name in requested_capabilities},
-                    broker=self.broker,
-                )
                 result = await child_runtime.run(
                     child_graph,
                     state,
                     budget=child_budget,
                     run_id=child_id,
-                    trace_id=session.trace_id,
+                    trace_id=child_trace_id,
                     parent_run_id=session.run_id,
                 )
-            except BaseException:
-                await self._release_child_budget(session, reservation, None)
+            except BaseException as exc:
+                # Every agent.delegated is joined exactly once, even when the child
+                # run could not converge on its own (cancellation, store failure).
+                # The durable join is appended before the in-memory reservation is
+                # released so a replayed parent never loses the child outcome.
+                try:
+                    await session.emit(
+                        EventType.AGENT_JOINED,
+                        {
+                            "child_run_id": str(child_id),
+                            "child_trace_id": str(child_trace_id),
+                            "status": (
+                                RunStatus.CANCELLED.value
+                                if isinstance(exc, asyncio.CancelledError)
+                                else RunStatus.FAILED.value
+                            ),
+                            "label": label,
+                            "error": str(exc) or type(exc).__name__,
+                            "metrics": None,
+                        },
+                    )
+                finally:
+                    # The reservation is always returned, even if the join event
+                    # itself cannot be appended; a leaked reservation would shrink
+                    # the parent's remaining budget for the rest of the run.
+                    await self._release_child_budget(session, reservation, None)
                 raise
-            await self._release_child_budget(session, reservation, result)
-            await session.emit(
-                EventType.AGENT_JOINED,
-                {
-                    "child_run_id": str(child_id),
-                    "status": result.status.value,
-                    "label": label,
-                    "metrics": {
-                        "steps": result.steps,
-                        "model_calls": result.model_calls,
-                        "tool_calls": result.tool_calls,
-                        "input_tokens": result.input_tokens,
-                        "output_tokens": result.output_tokens,
-                        "cost_usd": result.cost_usd,
+            try:
+                await session.emit(
+                    EventType.AGENT_JOINED,
+                    {
+                        "child_run_id": str(child_id),
+                        "child_trace_id": str(child_trace_id),
+                        "status": result.status.value,
+                        "label": label,
+                        "error": result.error,
+                        "metrics": {
+                            "steps": result.steps,
+                            "model_calls": result.model_calls,
+                            "tool_calls": result.tool_calls,
+                            "input_tokens": result.input_tokens,
+                            "output_tokens": result.output_tokens,
+                            "cost_usd": result.cost_usd,
+                        },
                     },
-                },
-            )
+                )
+            finally:
+                await self._release_child_budget(session, reservation, result)
             return result
 
         context = NodeContext.create(
@@ -530,7 +569,16 @@ class GraphRuntime:
     async def _reserve_child_budget(
         self, session: _Session, requested: RunBudget | None
     ) -> tuple[RunBudget, tuple[int, int, float]]:
-        """Atomically reserve a strict subset of the parent's remaining budget."""
+        """Atomically reserve a strict subset of the parent's remaining budget.
+
+        An explicitly requested budget is reserved in full on every dimension. A
+        child without an explicit budget inherits the parent's remaining budget as
+        its own cap and reserves nothing up front; its actual usage is folded into
+        the parent when it joins. Holding the whole shared pool up front would make
+        two legitimate concurrent unbounded children impossible, while the parent
+        still enforces its own totals after every join. An explicitly requested
+        budget is a fixed promise and is held in full for that child.
+        """
 
         async with session._budget_lock:
             remaining_steps = (
@@ -572,7 +620,10 @@ class GraphRuntime:
                 ):
                     raise _BudgetExceeded("child budget exceeds the parent's remaining budget")
                 child = requested
-            reservation = (child.max_steps, child.max_tokens, child.max_cost_usd)
+            if requested is None:
+                reservation = (0, 0, 0.0)
+            else:
+                reservation = (child.max_steps, child.max_tokens, child.max_cost_usd)
             session.reserved_steps += reservation[0]
             session.reserved_tokens += reservation[1]
             session.reserved_cost_usd += reservation[2]
@@ -693,6 +744,27 @@ class GraphRuntime:
     def _metrics_from_events(events: list[RunEvent]) -> _Metrics:
         metrics = _Metrics()
         for event in events:
+            if event.type == EventType.AGENT_JOINED:
+                # Child usage is folded into the parent totals when the child joins,
+                # so a resumed parent must rebuild it from the join events as well.
+                child = event.payload.get("metrics")
+                if isinstance(child, dict):
+                    for key in (
+                        "steps",
+                        "model_calls",
+                        "tool_calls",
+                        "input_tokens",
+                        "output_tokens",
+                    ):
+                        value = child.get(key, 0)
+                        setattr(
+                            metrics,
+                            key,
+                            getattr(metrics, key) + (value if isinstance(value, int) else 0),
+                        )
+                    cost = child.get("cost_usd", 0)
+                    metrics.cost_usd += cost if isinstance(cost, (int, float)) else 0
+                continue
             if event.type != EventType.NODE_COMPLETED:
                 continue
             usage = event.payload.get("usage")
