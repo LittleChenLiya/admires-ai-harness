@@ -18,8 +18,8 @@ class CaseChange(BaseModel):
 
     case_id: str
     kind: Literal["missing", "new_failure", "score_drop", "improvement", "new_case"]
-    baseline_score: float | None = Field(default=None, ge=0, le=1)
-    candidate_score: float | None = Field(default=None, ge=0, le=1)
+    baseline_score: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    candidate_score: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     reason: str
 
 
@@ -31,8 +31,8 @@ class ReportComparison(BaseModel):
     baseline_name: str
     candidate_name: str
     passed: bool
-    pass_rate_delta: float = Field(ge=-1, le=1)
-    mean_score_delta: float = Field(ge=-1, le=1)
+    pass_rate_delta: float = Field(ge=-1, le=1, allow_inf_nan=False)
+    mean_score_delta: float = Field(ge=-1, le=1, allow_inf_nan=False)
     regressions: tuple[CaseChange, ...] = ()
     improvements: tuple[CaseChange, ...] = ()
     unchanged_cases: int = Field(default=0, ge=0)
@@ -61,6 +61,17 @@ def load_report(path: str | Path) -> BenchmarkReport:
     """Load and validate a report previously emitted by ``BenchmarkReport``."""
 
     return BenchmarkReport.model_validate_json(Path(path).read_text(encoding="utf-8"))
+
+
+def _unique_cases(report: BenchmarkReport) -> dict[str, CaseResult]:
+    cases: dict[str, CaseResult] = {}
+    for result in report.results:
+        if result.case_id in cases:
+            raise ValueError(
+                f"report {report.name!r} contains duplicate case ID {result.case_id!r}"
+            )
+        cases[result.case_id] = result
+    return cases
 
 
 def _score_drop(
@@ -99,11 +110,11 @@ def compare_reports(
         "pass_rate_tolerance": pass_rate_tolerance,
     }
     for name, value in tolerances.items():
-        if not 0 <= value <= 1:
-            raise ValueError(f"{name} must be between 0 and 1")
+        if math.isnan(value) or math.isinf(value) or not 0 <= value <= 1:
+            raise ValueError(f"{name} must be a finite value between 0 and 1")
 
-    baseline_cases = {result.case_id: result for result in baseline.results}
-    candidate_cases = {result.case_id: result for result in candidate.results}
+    baseline_cases = _unique_cases(baseline)
+    candidate_cases = _unique_cases(candidate)
     regressions: list[CaseChange] = []
     improvements: list[CaseChange] = []
     unchanged = 0

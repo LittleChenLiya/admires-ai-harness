@@ -24,7 +24,11 @@ from admires_harness.evaluation import (
     ToolSequenceScorer,
     load_jsonl,
 )
-from admires_harness.evaluation.baseline import compare_reports, load_report
+from admires_harness.evaluation.baseline import (
+    EvaluationRegressionError,
+    compare_reports,
+    load_report,
+)
 from admires_harness.services.runs import RunManager, as_camel
 
 app = typer.Typer(
@@ -175,7 +179,11 @@ async def _evaluate(
     if baseline_path is not None:
         comparison = compare_reports(benchmark, load_report(baseline_path))
         if not comparison.passed:
-            comparison.raise_for_regressions()
+            try:
+                comparison.raise_for_regressions()
+            except EvaluationRegressionError as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(code=1) from exc
     if not benchmark.passed:
         raise typer.Exit(code=1)
 
