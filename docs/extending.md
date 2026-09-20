@@ -34,6 +34,29 @@ schemas, and wrap the resulting executor in `SecuredToolExecutor` with matching 
 before injecting it into a graph. The three reference workflows deliberately do not auto-wire
 MCP. Pin server packages and do not pass the entire process environment to an untrusted server.
 
+### Discovery and naming
+
+`MCPToolExecutor.connect()` normalizes both dict-shaped and pydantic-style SDK responses.
+Every `inputSchema` is coerced into a deterministic JSON Schema object (missing or invalid
+schemas become `{"type": "object", "properties": {}}`), tool names are exposed as
+`<server>__<tool>` (disable with `prefix_names=False`), duplicates are rejected, and
+`allow_tools` restricts which remote tools are ever exposed or callable.
+
+### Results and failures
+
+Text blocks and embedded text resources join the `ToolResult.content` channel; images,
+audio, resource links, and annotated blocks are preserved losslessly as JSON-safe
+`data["content_blocks"]`, and `structuredContent` lands in `data`. Unserializable
+payloads degrade to `<unserializable:TypeName>` markers — remote object reprs never leak.
+Failures stay distinguishable: `mcp_timeout` and `mcp_transport_error` are retryable,
+`mcp_tool_error` (remote `isError`) and `mcp_tool_not_found` are not, and caller
+cancellation always propagates as `CancelledError`. Transport errors are sanitized to the
+exception type name only. Every call carries a deterministic `mcp:<digest>` receipt derived
+from the run id, idempotency key, server, and tool name.
+
+The core package imports without MCP installed; only `stdio_mcp_executor` requires the
+optional `admires-ai-harness[mcp]` extra and raises `MCPDependencyError` otherwise.
+
 ## Add a grader
 
 Prefer deterministic graders over model-judged grading: exact answer, required substring,

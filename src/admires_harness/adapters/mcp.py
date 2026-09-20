@@ -39,6 +39,14 @@ def _read(value: Any, key: str, default: Any = None) -> Any:
     return getattr(value, key, default)
 
 
+def _struct(value: Any) -> Any:
+    """Return a mapping view for pydantic-style SDK objects, else the value itself."""
+
+    if not isinstance(value, Mapping) and hasattr(value, "model_dump"):
+        return _as_json(value)
+    return value
+
+
 def _as_json(value: Any) -> JsonValue:
     """Convert SDK/Pydantic objects to a JSON-safe value without leaking repr data."""
 
@@ -47,23 +55,63 @@ def _as_json(value: Any) -> JsonValue:
     try:
         return cast(JsonValue, json.loads(json.dumps(value)))
     except (TypeError, ValueError):
-        return str(value)
+        return f"<unserializable:{type(value).__name__}>"
 
 
-def _content_text(content: Any) -> str:
-    blocks = (
-        content if isinstance(content, Sequence) and not isinstance(content, (str, bytes)) else []
-    )
-    rendered: list[str] = []
-    for block in blocks:
+def _normalize_schema(raw: Any) -> dict[str, JsonValue]:
+    """Coerce an MCP ``inputSchema`` into a deterministic JSON Schema object."""
+
+    schema = _as_json(raw)
+    if not isinstance(schema, dict):
+        return {"type": "object", "properties": {}}
+    schema.setdefault("type", "object")
+    return schema
+
+
+def _normalize_content(content: Any) -> tuple[str, list[JsonValue]]:
+    """Split MCP content into a text channel and JSON-safe non-text blocks.
+
+    Text blocks and embedded text resources join the text channel. Images, audio,
+    resource links, blob resources, and unknown blocks are preserved losslessly as
+    normalized JSON-safe blocks so no information is dropped.
+    """
+
+    if content is None:
+        return "", []
+    if isinstance(content, Mapping):
+        # Some clients surface a single block instead of a one-element list.
+        content = [content]
+    if not isinstance(content, Sequence) or isinstance(content, (str, bytes)):
+        return "", []
+    texts: list[str] = []
+    blocks: list[JsonValue] = []
+    for block in content:
+        block = _struct(block)
         text = _read(block, "text")
         if text is not None:
-            rendered.append(str(text))
+            texts.append(str(text))
+            normalized = _as_json(block)
+            if isinstance(normalized, dict) and set(normalized) - {"type", "text"}:
+                # Annotations and other extra fields stay available in the block channel.
+                blocks.append(normalized)
             continue
         resource = _read(block, "resource")
         if resource is not None:
-            rendered.append(json.dumps(_as_json(resource), ensure_ascii=False, sort_keys=True))
-    return "\n".join(rendered)
+            resource_json = _as_json(resource)
+            resource_text = resource_json.get("text") if isinstance(resource_json, dict) else None
+            if isinstance(resource_text, str):
+                texts.append(resource_text)
+                if isinstance(resource_json, dict) and set(resource_json) - {"text"}:
+                    blocks.append({"type": "resource", "resource": resource_json})
+            else:
+                blocks.append({"type": "resource", "resource": resource_json})
+            continue
+        normalized = _as_json(block)
+        if isinstance(normalized, dict):
+            blocks.append(normalized)
+        else:
+            blocks.append({"type": str(_read(block, "type", "unknown")), "value": normalized})
+    return "\n".join(texts), blocks
 
 
 class MCPToolExecutor:
@@ -89,22 +137,22 @@ class MCPToolExecutor:
         self._definitions: dict[str, dict[str, Any]] = {}
         self._remote_names: dict[str, str] = {}
         for tool in tools:
+            tool = _struct(tool)
             remote_name = str(_read(tool, "name", ""))
             if not remote_name or (allow_tools is not None and remote_name not in allow_tools):
                 continue
             exposed_name = f"{server_name}__{remote_name}" if prefix_names else remote_name
             if exposed_name in self._definitions:
                 raise ValueError(f"duplicate MCP tool name: {exposed_name}")
-            raw_schema = _read(tool, "inputSchema", _read(tool, "input_schema", {}))
-            schema = _as_json(raw_schema)
-            if not isinstance(schema, dict):
-                schema = {"type": "object"}
+            raw_schema = _read(tool, "inputSchema", _read(tool, "input_schema", None))
+            schema = _normalize_schema(raw_schema)
+            description = _read(tool, "description", "") or ""
             self._remote_names[exposed_name] = remote_name
             self._definitions[exposed_name] = {
                 "type": "function",
                 "function": {
                     "name": exposed_name,
-                    "description": str(_read(tool, "description", "")),
+                    "description": str(description),
                     "parameters": schema,
                 },
                 "x-mcp-server": server_name,
@@ -155,6 +203,10 @@ class MCPToolExecutor:
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 response = await self._client.call_tool(remote_name, call.arguments)
+        except asyncio.CancelledError:
+            # Caller cancellation must stay distinguishable from timeouts and
+            # transport failures: propagate it instead of returning a ToolResult.
+            raise
         except TimeoutError:
             return ToolResult(
                 ok=False,
@@ -172,17 +224,20 @@ class MCPToolExecutor:
 
         failed = bool(_read(response, "isError", _read(response, "is_error", False)))
         structured = _as_json(
-            _read(response, "structuredContent", _read(response, "structured_content", {}))
+            _read(response, "structuredContent", _read(response, "structured_content", None))
         )
-        data: dict[str, JsonValue] = (
-            structured if isinstance(structured, dict) else {"result": structured}
-        )
+        data: dict[str, JsonValue] = {}
+        if structured is not None:
+            data = structured if isinstance(structured, dict) else {"result": structured}
+        text, extra_blocks = _normalize_content(_read(response, "content", ()))
+        if extra_blocks:
+            data["content_blocks"] = extra_blocks
         digest = hashlib.sha256(
             f"{run_id}:{idempotency_key}:{self.server_name}:{remote_name}".encode()
         ).hexdigest()
         return ToolResult(
             ok=not failed,
-            content=_content_text(_read(response, "content", ())),
+            content=text,
             data=data,
             error_code="mcp_tool_error" if failed else None,
             receipt=f"mcp:{digest}",
