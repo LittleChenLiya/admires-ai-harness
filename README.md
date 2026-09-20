@@ -269,6 +269,7 @@ isolation.
 - [Security model and residual risks](docs/security.md)
 - [Evaluation methodology](docs/evaluation.md)
 - [Extension guide](docs/extending.md)
+- [Policy-wrapped MCP tools](docs/mcp-secured-tools.md)
 - [Contributor quickstart](docs/contributor-quickstart.md)
 - [Code map](docs/code-map.md)
 - [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)

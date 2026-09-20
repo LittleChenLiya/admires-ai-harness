@@ -33,6 +33,9 @@ MCP is an adapter, not a trusted tunnel. Configure the server explicitly, import
 schemas, and wrap the resulting executor in `SecuredToolExecutor` with matching safety specs
 before injecting it into a graph. The three reference workflows deliberately do not auto-wire
 MCP. Pin server packages and do not pass the entire process environment to an untrusted server.
+See [the policy-wrapped MCP guide](mcp-secured-tools.md) and the runnable offline example in
+`examples/mcp_secured_stdio/` for allowlisted discovery, namespaced calls, policy evaluation,
+and normalized failure handling.
 
 ## Add a grader
 
