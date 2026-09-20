@@ -13,9 +13,22 @@ event language.
 
 ## Add a model provider
 
-Implement `ModelProvider.complete()` and `stream()`. Normalize response content, tool calls,
-usage, and retryability into the shared contracts. Fail fast when required configuration is
-absent. Never expose authorization headers or raw provider responses in user-facing errors.
+Implement `ModelProvider.complete()` and `stream()`. Normalize provider output into the
+shared `ModelResponse`/`ToolCall`/`ModelUsage` contracts:
+
+- `content` may be missing, `None`, a plain string, or a list of text parts; collapse all
+  forms to a single string.
+- Streamed tool calls may arrive fragmented across chunks; merge fragments by chunk `index`,
+  concatenate the JSON argument strings, and reject arguments that are not a JSON object.
+- Treat `usage` as a latest-snapshot-wins value so repeated frames never double count tokens
+  or cost; missing or malformed fields become zero.
+- Convert provider exceptions to `ModelProviderError` with sanitized messages that never
+  include credentials or request payloads, and mark timeouts plus 429/5xx responses retryable.
+
+`StreamAccumulator` in `adapters/models.py` already implements this merge for
+chat-completions streams (including empty keep-alive chunks and replayed duplicates); reuse
+it instead of re-implementing chunk merging. Fail fast when required configuration is absent.
+Never expose authorization headers or raw provider responses in user-facing errors.
 
 ## Add a tool
 

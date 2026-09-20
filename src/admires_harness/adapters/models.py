@@ -3,6 +3,18 @@
 The mock provider is deliberately capable enough to drive complete offline demos.  The
 OpenAI-compatible adapter only depends on HTTP, so it works with hosted OpenAI models as
 well as local servers implementing the chat-completions protocol.
+
+Normalization rules shared by both providers:
+
+* ``content`` may be missing, ``None``, a plain string, or a list of text parts; all
+  forms collapse to a single string.
+* ``tool_calls`` may arrive whole (non-streaming) or fragmented across stream chunks;
+  fragments are merged by chunk ``index`` and their JSON argument strings concatenated
+  before parsing.  Arguments that are not a JSON object are rejected.
+* ``usage`` may be missing or repeated; the latest reported snapshot wins so tokens and
+  cost are never double counted.
+* Provider exceptions are converted to :class:`ModelProviderError` with sanitized
+  messages that never include credentials or request payloads.
 """
 
 from __future__ import annotations
@@ -36,6 +48,182 @@ class ModelProviderError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.retryable = retryable
+
+
+def _content_to_text(content: Any) -> str:
+    """Collapse provider content (missing, string, or text-part list) into a string."""
+
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, Sequence):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, Mapping):
+                text = part.get("text")
+                if text is not None:
+                    parts.append(str(text))
+            else:
+                raise ModelProviderError("model provider returned invalid content")
+        return "".join(parts)
+    raise ModelProviderError("model provider returned invalid content")
+
+
+def _parse_tool_call(raw_call: Any) -> ToolCall:
+    """Validate one non-streaming tool call and convert it to the shared contract."""
+
+    try:
+        if not isinstance(raw_call, Mapping):
+            raise TypeError
+        function = raw_call["function"]
+        if not isinstance(function, Mapping):
+            raise TypeError
+        raw_arguments = function.get("arguments", "{}")
+        arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+        if not isinstance(arguments, dict):
+            raise TypeError
+        return ToolCall(
+            id=str(raw_call["id"]),
+            name=str(function["name"]),
+            arguments=arguments,
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ModelProviderError("model provider returned an invalid tool call") from exc
+
+
+def _coerce_count(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _coerce_cost(value: Any) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _normalize_usage(raw_usage: Any) -> ModelUsage:
+    """Convert a provider usage object; missing or malformed fields become zero."""
+
+    if not isinstance(raw_usage, Mapping):
+        return ModelUsage()
+    input_tokens = raw_usage.get("prompt_tokens", raw_usage.get("input_tokens", 0))
+    output_tokens = raw_usage.get("completion_tokens", raw_usage.get("output_tokens", 0))
+    return ModelUsage(
+        input_tokens=_coerce_count(input_tokens),
+        output_tokens=_coerce_count(output_tokens),
+        cost_usd=_coerce_cost(raw_usage.get("cost_usd", 0)),
+    )
+
+
+class StreamAccumulator:
+    """Merge chat-completion stream chunks into a single ``ModelResponse``.
+
+    Chunks may carry content deltas, tool-call fragments, usage snapshots, a finish
+    reason, or nothing at all (empty keep-alive chunks are ignored).  A chunk that is
+    identical to the one applied immediately before it is treated as a replayed
+    duplicate and skipped, so reconnections never double content or tokens.  Usage is
+    tracked as the latest snapshot rather than a sum, which keeps token and cost
+    accounting stable when providers repeat the final usage frame.
+    """
+
+    def __init__(self, *, default_model: str = "unknown") -> None:
+        self._default_model = default_model
+        self._content_parts: list[str] = []
+        self._tool_calls: dict[int, dict[str, Any]] = {}
+        self._usage = ModelUsage()
+        self._finish_reason: str | None = None
+        self._model: str | None = None
+        self._previous_chunk: Mapping[str, Any] | None = None
+        self.chunks_seen = 0
+        self.chunks_merged = 0
+
+    def add(self, chunk: Mapping[str, Any]) -> None:
+        """Merge one raw provider chunk; duplicates and empty chunks are harmless."""
+
+        self.chunks_seen += 1
+        if chunk == self._previous_chunk:
+            return
+        self._previous_chunk = chunk
+        self.chunks_merged += 1
+
+        model = chunk.get("model")
+        if model:
+            self._model = str(model)
+        usage = chunk.get("usage")
+        if usage:
+            self._usage = _normalize_usage(usage)
+
+        choices = chunk.get("choices") or []
+        if isinstance(choices, str) or not isinstance(choices, Sequence):
+            raise ModelProviderError("model provider returned an invalid stream event")
+        if not choices:
+            return
+        first = choices[0]
+        if not isinstance(first, Mapping):
+            raise ModelProviderError("model provider returned an invalid stream event")
+        finish_reason = first.get("finish_reason")
+        if finish_reason:
+            self._finish_reason = str(finish_reason)
+        delta = first.get("delta") or {}
+        if not isinstance(delta, Mapping):
+            raise ModelProviderError("model provider returned an invalid stream event")
+        content = _content_to_text(delta.get("content"))
+        if content:
+            self._content_parts.append(content)
+        for raw_call in delta.get("tool_calls") or []:
+            self._merge_tool_call(raw_call)
+
+    def _merge_tool_call(self, raw_call: Any) -> None:
+        if not isinstance(raw_call, Mapping):
+            raise ModelProviderError("model provider returned an invalid tool call")
+        index = _coerce_count(raw_call.get("index", 0))
+        entry = self._tool_calls.setdefault(index, {"id": None, "name": None, "arguments": []})
+        if raw_call.get("id"):
+            entry["id"] = str(raw_call["id"])
+        function = raw_call.get("function") or {}
+        if not isinstance(function, Mapping):
+            raise ModelProviderError("model provider returned an invalid tool call")
+        if function.get("name"):
+            entry["name"] = str(function["name"])
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            entry["arguments"].append(arguments)
+        elif isinstance(arguments, Mapping):
+            entry["arguments"].append(json.dumps(arguments))
+        elif arguments is not None:
+            raise ModelProviderError("model provider returned an invalid tool call")
+
+    def build(self) -> ModelResponse:
+        """Materialize the merged response, validating tool-call arguments as JSON."""
+
+        tool_calls: list[ToolCall] = []
+        for index in sorted(self._tool_calls):
+            entry = self._tool_calls[index]
+            raw_arguments = "".join(entry["arguments"]) or "{}"
+            try:
+                arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError as exc:
+                raise ModelProviderError("model provider returned an invalid tool call") from exc
+            if not isinstance(arguments, dict) or not entry["name"]:
+                raise ModelProviderError("model provider returned an invalid tool call")
+            call: dict[str, Any] = {"name": entry["name"], "arguments": arguments}
+            if entry["id"]:
+                call["id"] = entry["id"]
+            tool_calls.append(ToolCall(**call))
+        return ModelResponse(
+            content="".join(self._content_parts),
+            tool_calls=tuple(tool_calls),
+            usage=self._usage,
+            finish_reason=self._finish_reason or "stop",
+            model=self._model or self._default_model,
+        )
 
 
 class MockModelProvider:
@@ -133,6 +321,7 @@ class OpenAICompatibleProvider:
         if not model.strip():
             raise ValueError("model must not be empty")
         self.model = model
+        self._api_key = api_key
         self._request_options = dict(request_options or {})
         self._owns_client = client is None
         headers = {"Accept": "application/json", **dict(extra_headers or {})}
@@ -177,10 +366,18 @@ class OpenAICompatibleProvider:
         }
         if tools:
             payload["tools"] = list(tools)
+        if stream:
+            payload["stream_options"] = {"include_usage": True}
         return payload
 
-    @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
+    def _sanitize(self, message: str) -> str:
+        """Remove credentials from a message before it reaches callers or logs."""
+
+        if self._api_key:
+            message = message.replace(self._api_key, "[redacted]")
+        return message
+
+    def _raise_for_status(self, response: httpx.Response) -> None:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -191,7 +388,9 @@ class OpenAICompatibleProvider:
                 detail = None
             message = str(detail or f"model provider returned HTTP {status}")
             raise ModelProviderError(
-                message, status_code=status, retryable=status == 429 or status >= 500
+                self._sanitize(message),
+                status_code=status,
+                retryable=status == 429 or status >= 500,
             ) from exc
 
     async def complete(
@@ -218,45 +417,24 @@ class OpenAICompatibleProvider:
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise ModelProviderError("model provider returned an invalid response") from exc
 
-        tool_calls: list[ToolCall] = []
-        for raw_call in message.get("tool_calls") or []:
-            try:
-                function = raw_call["function"]
-                raw_arguments = function.get("arguments", "{}")
-                arguments = (
-                    json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
-                )
-                if not isinstance(arguments, dict):
-                    raise TypeError
-                tool_calls.append(
-                    ToolCall(
-                        id=str(raw_call["id"]),
-                        name=str(function["name"]),
-                        arguments=arguments,
-                    )
-                )
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise ModelProviderError("model provider returned an invalid tool call") from exc
-
-        usage = data.get("usage") or {}
         return ModelResponse(
-            content=message.get("content") or "",
-            tool_calls=tuple(tool_calls),
-            usage=ModelUsage(
-                input_tokens=int(usage.get("prompt_tokens", 0)),
-                output_tokens=int(usage.get("completion_tokens", 0)),
-                cost_usd=float(usage.get("cost_usd", 0)),
+            content=_content_to_text(message.get("content")),
+            tool_calls=tuple(
+                _parse_tool_call(raw_call) for raw_call in message.get("tool_calls") or []
             ),
+            usage=_normalize_usage(data.get("usage")),
             finish_reason=str(choice.get("finish_reason", "stop")),
             model=str(data.get("model", self.model)),
         )
 
-    async def stream(
+    async def stream_events(
         self,
         messages: Sequence[Message],
         *,
         tools: Sequence[Mapping[str, Any]] = (),
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[Mapping[str, Any]]:
+        """Yield raw decoded stream chunks, normalizing transport failures."""
+
         try:
             async with self._client.stream(
                 "POST",
@@ -273,17 +451,46 @@ class OpenAICompatibleProvider:
                         return
                     try:
                         chunk = json.loads(data)
-                        content = chunk["choices"][0]["delta"].get("content")
-                    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+                    except json.JSONDecodeError as exc:
                         raise ModelProviderError(
                             "model provider returned an invalid stream event"
                         ) from exc
-                    if content:
-                        yield str(content)
+                    if not isinstance(chunk, Mapping):
+                        raise ModelProviderError("model provider returned an invalid stream event")
+                    yield cast(Mapping[str, Any], chunk)
         except httpx.TimeoutException as exc:
             raise ModelProviderError("model provider timed out", retryable=True) from exc
         except httpx.TransportError as exc:
             raise ModelProviderError("model provider is unavailable", retryable=True) from exc
+
+    async def complete_stream(
+        self,
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[Mapping[str, Any]] = (),
+    ) -> ModelResponse:
+        """Consume the streaming endpoint and return one merged ``ModelResponse``."""
+
+        accumulator = StreamAccumulator(default_model=self.model)
+        async for chunk in self.stream_events(messages, tools=tools):
+            accumulator.add(chunk)
+        return accumulator.build()
+
+    async def stream(
+        self,
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[Mapping[str, Any]] = (),
+    ) -> AsyncIterator[str]:
+        async for chunk in self.stream_events(messages, tools=tools):
+            try:
+                content = _content_to_text(
+                    cast(Mapping[str, Any], chunk["choices"][0]["delta"]).get("content")
+                )
+            except (KeyError, IndexError, TypeError):
+                continue
+            if content:
+                yield content
 
 
 def create_model_provider(settings: Settings) -> ModelProvider:
