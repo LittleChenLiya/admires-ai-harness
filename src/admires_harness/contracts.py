@@ -111,7 +111,7 @@ class ToolCall(StrictModel):
 class ModelUsage(StrictModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
-    cost_usd: float = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0, ge=0, allow_inf_nan=False)
 
     @property
     def total_tokens(self) -> int:

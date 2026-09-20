@@ -24,7 +24,7 @@ class EvalOutput(BaseModel):
     text: str = ""
     tool_calls: tuple[str, ...] = ()
     usage: ModelUsage = Field(default_factory=ModelUsage)
-    latency_ms: float = Field(default=0, ge=0)
+    latency_ms: float = Field(default=0, ge=0, allow_inf_nan=False)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -33,7 +33,7 @@ class CaseResult(BaseModel):
 
     case_id: str
     passed: bool
-    score: float = Field(ge=0, le=1)
+    score: float = Field(ge=0, le=1, allow_inf_nan=False)
     output: EvalOutput | None = None
     scores: tuple[Score, ...] = ()
     error: str | None = None
@@ -47,12 +47,12 @@ class BenchmarkReport(BaseModel):
     ended_at: datetime
     threshold: float
     passed: bool
-    pass_rate: float = Field(ge=0, le=1)
-    mean_score: float = Field(ge=0, le=1)
-    p50_latency_ms: float = Field(ge=0)
-    p95_latency_ms: float = Field(ge=0)
+    pass_rate: float = Field(ge=0, le=1, allow_inf_nan=False)
+    mean_score: float = Field(ge=0, le=1, allow_inf_nan=False)
+    p50_latency_ms: float = Field(ge=0, allow_inf_nan=False)
+    p95_latency_ms: float = Field(ge=0, allow_inf_nan=False)
     total_tokens: int = Field(ge=0)
-    total_cost_usd: float = Field(ge=0)
+    total_cost_usd: float = Field(ge=0, allow_inf_nan=False)
     results: tuple[CaseResult, ...]
     environment: dict[str, str] = Field(default_factory=dict)
 

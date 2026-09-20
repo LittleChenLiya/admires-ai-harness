@@ -94,3 +94,62 @@ def test_evaluate_writes_report_and_accepts_it_as_a_baseline(tmp_path: Path) -> 
 
     assert compared.exit_code == 0
     assert json.loads(compared.stdout)["passed"] is True
+
+
+def test_evaluate_exits_nonzero_when_the_candidate_regresses(tmp_path: Path) -> None:
+    dataset = tmp_path / "reference.jsonl"
+    dataset.write_text(
+        json.dumps(
+            {
+                "id": "research-smoke",
+                "input": "Why are durable events useful?",
+                "expected": {"text": "Sources", "tools": []},
+                "metadata": {"demo": "research"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "baseline.json"
+    first = runner.invoke(
+        app,
+        [
+            "evaluate",
+            str(dataset),
+            "--report",
+            str(report),
+            "--data-dir",
+            str(tmp_path / "first"),
+        ],
+    )
+    assert first.exit_code == 0
+
+    baseline_payload = json.loads(report.read_text(encoding="utf-8"))
+    baseline_payload["results"].append(
+        {
+            "case_id": "ghost-case",
+            "passed": True,
+            "score": 1.0,
+            "output": None,
+            "scores": [],
+            "error": None,
+        }
+    )
+    baseline_payload["pass_rate"] = 1.0
+    baseline_payload["mean_score"] = 1.0
+    report.write_text(json.dumps(baseline_payload), encoding="utf-8")
+
+    regressed = runner.invoke(
+        app,
+        [
+            "evaluate",
+            str(dataset),
+            "--baseline",
+            str(report),
+            "--data-dir",
+            str(tmp_path / "candidate"),
+        ],
+    )
+
+    assert regressed.exit_code == 1
+    assert "ghost-case: missing" in regressed.output
