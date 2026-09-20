@@ -59,6 +59,27 @@ capture state and the next node at a graph-node boundary. A compare-and-swap rev
 two workers from advancing the same run simultaneously. Replaying a run is read-only and
 never invokes a model or tool.
 
+## Projection and replay semantics
+
+Run views are pure projections of the persisted event stream; no mutable application state is
+consulted. Delivery is at-least-once and reconnects can surface stale batches, so the
+projection layer in `observability/projections.py` is built for hostile input:
+
+- **Idempotent replay.** Events are deduplicated by `event_id`, and conflicting events that
+  claim the same sequence are resolved by a deterministic total order
+  (`sequence`, `timestamp`, `event_id`). Re-applying the same stream — in any delivery order —
+  yields the identical view.
+- **Full reconstruction.** One fold recovers the initial state from `run.created`, merged node
+  updates, per-node status, the approval lifecycle (pending/approved/rejected/consumed), tool
+  invocation outcomes, accumulated metrics, child-run records, and the terminal lifecycle.
+  A terminal `metrics` payload is cumulative and authoritative; per-node accumulation only
+  fills in runs that have not terminated.
+- **Explicit anomalies.** Gaps, duplicates, out-of-order delivery, foreign run IDs, unknown
+  event types, and malformed payloads become `ProjectionDiagnostic` records on
+  `project_run_checked` — nothing is silently stitched into a plausible-looking snapshot.
+  The strict `project_run` surface keeps the historical contract and raises `ValueError` for
+  integrity failures (empty stream, mixed run IDs, sequence gaps, missing `run.created`).
+
 ## Graph semantics
 
 A `StateGraph` contains named asynchronous nodes and declared edges. `compile()` rejects an
