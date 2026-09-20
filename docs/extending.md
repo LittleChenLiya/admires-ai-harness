@@ -34,6 +34,23 @@ schemas, and wrap the resulting executor in `SecuredToolExecutor` with matching 
 before injecting it into a graph. The three reference workflows deliberately do not auto-wire
 MCP. Pin server packages and do not pass the entire process environment to an untrusted server.
 
+The adapter normalizes both dict-shaped and object-shaped SDK responses identically:
+
+- Tool discovery defaults missing or invalid `inputSchema` values to `{"type": "object"}`,
+  prefixes exposed names with the server name, enforces the `allow_tools` set, and rejects
+  duplicate exposed names instead of silently overwriting them.
+- Results concatenate text blocks into `ToolResult.content`, keep image, audio, resource,
+  and resource-link blocks as JSON-safe mappings in `data["content"]`, and merge
+  `structuredContent` into `data` (scalar structured values are wrapped under `"result"`).
+  Bytes are base64-encoded and non-serializable values become typed placeholders, so no remote
+  object `repr` ever leaks into a result.
+- Failures stay distinguishable: `mcp_tool_not_found` (not retryable), `mcp_timeout` and
+  `mcp_transport_error` (retryable, transport messages are reduced to the exception type
+  name), and `mcp_tool_error` for server-side `isError` responses. Caller cancellation
+  propagates as `CancelledError` and is never converted into a tool failure. Every remote
+  call carries a deterministic `mcp:<sha256>` receipt derived from the run id and
+  idempotency key.
+
 ## Add a grader
 
 Prefer deterministic graders over model-judged grading: exact answer, required substring,
