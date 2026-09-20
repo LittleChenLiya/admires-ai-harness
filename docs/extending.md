@@ -24,8 +24,18 @@ and an async handler returning `ToolResult`. A side-effecting tool must accept t
 idempotency key and return a receipt. The registry applies policy before invoking the handler;
 do not perform permission checks only inside prompts or UI code.
 
+The registry deduplicates side-effecting calls per `(run_id, idempotency_key)`: concurrent
+duplicates share a single in-flight handler invocation, and the first successful result is
+cached as the receipt. Replays with identical arguments (JSON key order is canonicalized)
+return the cached result; replays with different arguments fail with `idempotency_conflict`.
+Handler failures and exceptions are never cached, so a retry after a failure re-invokes the
+handler. Pure and read-only tools bypass receipts entirely and are never cached. Handlers
+must therefore be safe to retry after failure and must not assume a successful result will
+ever be recomputed within the same run and key.
+
 Write tests for schema rejection, policy denial, handler failure, output bounds, and repeated
-idempotency keys. Filesystem tools additionally require traversal and symlink tests.
+idempotency keys, including concurrent duplicates of the same key. Filesystem tools
+additionally require traversal and symlink tests.
 
 ## Add an MCP server
 

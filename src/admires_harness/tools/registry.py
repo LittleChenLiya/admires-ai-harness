@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -43,11 +44,20 @@ class ToolDefinition:
 
 
 class ToolRegistry:
-    """Native tool adapter implementing the runtime ToolExecutor port."""
+    """Native tool adapter implementing the runtime ToolExecutor port.
+
+    Side-effecting calls are deduplicated per (run_id, idempotency_key): concurrent
+    duplicates share one in-flight handler invocation, and the first successful result is
+    cached as a receipt. Replays with identical arguments return the cached result;
+    replays with different arguments fail with idempotency_conflict. Failed handler
+    outcomes are never cached, so a retry after a failure re-invokes the handler.
+    Read-only and pure tools are never cached.
+    """
 
     def __init__(self, definitions: Sequence[ToolDefinition] = ()) -> None:
         self._definitions: dict[str, ToolDefinition] = {}
         self._receipts: dict[tuple[UUID, str], tuple[str, ToolResult]] = {}
+        self._inflight: dict[tuple[UUID, str], tuple[str, asyncio.Task[ToolResult]]] = {}
         for definition in definitions:
             self.register(definition)
 
@@ -77,6 +87,8 @@ class ToolRegistry:
                 content=exc.errors(include_url=False, include_input=False)[0]["msg"],
                 error_code="invalid_arguments",
             )
+        if definition.safety.side_effect in {SideEffect.NONE, SideEffect.READ}:
+            return await self._invoke(definition, arguments)
         digest = hashlib.sha256(
             json.dumps(call.arguments, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -84,22 +96,51 @@ class ToolRegistry:
         previous = self._receipts.get(key)
         if previous is not None:
             if previous[0] != digest:
-                return ToolResult(
-                    ok=False,
-                    content="idempotency key was already used with different arguments",
-                    error_code="idempotency_conflict",
-                )
+                return _idempotency_conflict()
             return previous[1]
-        try:
-            raw = definition.handler(arguments)
-            result = await raw if isinstance(raw, Awaitable) else raw
-        except Exception as exc:
-            return ToolResult(ok=False, content=str(exc), error_code="tool_execution_failed")
-        if definition.safety.side_effect not in {SideEffect.NONE, SideEffect.READ}:
+        pending = self._inflight.get(key)
+        if pending is not None:
+            pending_digest, future = pending
+            if pending_digest != digest:
+                return _idempotency_conflict()
+            return await asyncio.shield(future)
+        future = asyncio.get_running_loop().create_task(
+            self._execute_side_effecting(definition, arguments, key=key, digest=digest)
+        )
+        self._inflight[key] = (digest, future)
+        future.add_done_callback(lambda _: self._inflight.pop(key, None))
+        return await asyncio.shield(future)
+
+    async def _execute_side_effecting(
+        self,
+        definition: ToolDefinition,
+        arguments: BaseModel,
+        *,
+        key: tuple[UUID, str],
+        digest: str,
+    ) -> ToolResult:
+        result = await self._invoke(definition, arguments)
+        if result.ok:
             receipt = result.receipt or f"sha256:{digest}"
             result = result.model_copy(update={"receipt": receipt})
             self._receipts[key] = (digest, result)
         return result
+
+    @staticmethod
+    async def _invoke(definition: ToolDefinition, arguments: BaseModel) -> ToolResult:
+        try:
+            raw = definition.handler(arguments)
+            return await raw if isinstance(raw, Awaitable) else raw
+        except Exception as exc:
+            return ToolResult(ok=False, content=str(exc), error_code="tool_execution_failed")
+
+
+def _idempotency_conflict() -> ToolResult:
+    return ToolResult(
+        ok=False,
+        content="idempotency key was already used with different arguments",
+        error_code="idempotency_conflict",
+    )
 
 
 class _PathInput(BaseModel):
