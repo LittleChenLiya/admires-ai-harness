@@ -8,6 +8,13 @@ from admires_harness.memory.models import MemoryRecord, RetrievalHit
 
 
 class MemoryStore(Protocol):
+    """Durable memory port.
+
+    Implementations must keep namespaces isolated, reject cross-dimension writes
+    within a namespace, and surface storage failures as MemoryStoreError subclasses
+    rather than raw driver exceptions.
+    """
+
     async def put(self, record: MemoryRecord) -> None: ...
 
     async def search(

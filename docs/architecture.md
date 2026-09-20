@@ -84,6 +84,23 @@ crash-safe deduplication. Read-only replay is always safe.
 An approval is bound to the run, tool arguments digest, checkpoint revision, expiry, and a
 single consumption. This prevents approval replay after state or arguments change.
 
+## Memory store semantics
+
+SQLiteMemoryStore keeps durable, namespace-isolated memories in a WAL database. Every
+operation uses a short-lived connection with a busy timeout, so any number of store
+instances (tasks, threads, or processes) may initialize the same file and write
+concurrently; schema creation is idempotent and retried across the journal-mode
+transition. Writes run in immediate transactions: a failed upsert (for example an
+embedding-dimension conflict within a namespace) rolls back completely and never
+pollutes later reads, while committed transactions are fully visible to every
+instance. Searches rank by descending cosine score with a stable record-id tiebreak.
+
+Storage failures surface as typed errors instead of raw driver exceptions:
+MemoryStoreLockedError when contention outlasts the busy timeout,
+MemoryCorruptionError when a persisted row cannot be decoded, and
+MemoryStoreClosedError for any use after aclose(). Cancellation closes the
+connection and rolls back its transaction, leaving the store reusable.
+
 ## Dependency boundaries
 
 The runtime depends only on small `Protocol` ports. SQLite, in-memory stores, model providers,
