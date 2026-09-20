@@ -1,10 +1,11 @@
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
-from admires_harness.contracts import ToolCall
-from admires_harness.safety import WorkspaceSandbox
-from admires_harness.tools import workspace_tools
+from admires_harness.contracts import RiskLevel, SideEffect, ToolCall, ToolResult
+from admires_harness.safety import ToolSafetySpec, WorkspaceSandbox
+from admires_harness.tools import ToolDefinition, ToolRegistry, workspace_tools
 
 
 @pytest.mark.asyncio
@@ -69,3 +70,48 @@ async def test_read_list_search_and_unknown_tool(tmp_path):
     assert listed.ok and "notes.txt" in listed.content
     assert searched.ok and "checkpoints" in searched.content
     assert unknown.error_code == "unknown_tool"
+
+
+class _FlakyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    value: str = "x"
+
+
+@pytest.mark.asyncio
+async def test_failed_side_effect_is_not_cached_and_retry_reexecutes():
+    attempts = 0
+
+    def handler(arguments: BaseModel) -> ToolResult:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return ToolResult(
+                ok=False, content="backend busy", error_code="tool_busy", retryable=True
+            )
+        return ToolResult(ok=True, content="done")
+
+    registry = ToolRegistry(
+        [
+            ToolDefinition(
+                "flaky.write",
+                "Fails once, then succeeds.",
+                _FlakyInput,
+                ToolSafetySpec(
+                    name="flaky.write", side_effect=SideEffect.WRITE, risk=RiskLevel.MEDIUM
+                ),
+                handler,
+            )
+        ]
+    )
+    run_id = uuid4()
+    call = ToolCall(name="flaky.write", arguments={"value": "x"})
+
+    failed = await registry.execute(call, run_id=run_id, idempotency_key="stable")
+    retried = await registry.execute(call, run_id=run_id, idempotency_key="stable")
+    replayed = await registry.execute(call, run_id=run_id, idempotency_key="stable")
+
+    assert failed.error_code == "tool_busy" and failed.retryable
+    assert retried.ok and retried.receipt
+    # Only the successful result is cached; the retry re-executed the handler.
+    assert replayed == retried
+    assert attempts == 2
