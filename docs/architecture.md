@@ -84,6 +84,27 @@ crash-safe deduplication. Read-only replay is always safe.
 An approval is bound to the run, tool arguments digest, checkpoint revision, expiry, and a
 single consumption. This prevents approval replay after state or arguments change.
 
+## Durable memory store
+
+`SQLiteMemoryStore` persists namespaced memories as JSON embeddings in a WAL-mode SQLite
+database. `initialize()` is idempotent and safe to run concurrently from many store
+instances against the same file: schema creation uses `IF NOT EXISTS` and retries the WAL
+transition briefly, since SQLite can report `SQLITE_BUSY` there without honoring the busy
+timeout. Each instance serializes its own writes, and a configurable `busy_timeout_ms`
+guards cross-instance contention; a lock that outlives it raises the stable
+`MemoryStoreLockedError` instead of a raw `sqlite3.OperationalError`.
+
+Writes run in a single immediate transaction that checks the namespace embedding dimension
+before upserting, so a dimension conflict rolls back cleanly and never leaves a
+half-committed row. Upserts keep the original `created_at` and bump `updated_at`. Every
+operation opens and closes its own connection and cursors, so failed or cancelled calls
+leak no handles and leave the store reusable. Rows that fail to decode raise
+`MemoryCorruptionError` with the row identity, and corruption stays contained to its
+namespace. `close()` makes later operations raise `MemoryStoreClosedError` until
+`initialize()` reopens the store; a new instance can always reopen an existing WAL
+database. Search keeps its contract of namespace isolation, dimension matching, and
+ordering by descending score with record ID as the tie-breaker.
+
 ## Dependency boundaries
 
 The runtime depends only on small `Protocol` ports. SQLite, in-memory stores, model providers,
