@@ -22,7 +22,7 @@ async def test_workspace_tools_validate_and_confine_paths(tmp_path):
         idempotency_key="escaped",
     )
     assert invalid.error_code == "invalid_arguments"
-    assert escaped.error_code == "tool_execution_failed"
+    assert escaped.error_code == "path_traversal"
     assert not (tmp_path / "secret").exists()
 
 

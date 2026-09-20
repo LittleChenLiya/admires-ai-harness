@@ -17,6 +17,15 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
 - Network tools and MCP servers are disabled until explicitly configured.
 - Paths are resolved against a per-run workspace; absolute paths, traversal, symlinks,
   junctions, and hard-linked files are rejected.
+- Workspace paths are validated per component: Windows drive-relative paths, alternate
+  data streams, reserved device names, and trailing space/dot components are denied.
+  After every open, the descriptor identity is re-verified against a freshly re-walked
+  link-free path, so a concurrently replaced file or swapped parent directory cannot
+  redirect reads or writes outside the root. Exclusive creates use O_EXCL, concurrent
+  parent creation is atomic, and failed creates remove any partial file. Sandbox
+  failures carry stable machine-readable codes (not_found, already_exists,
+  not_directory, link_denied, hard_link_denied, replaced_file, permission_denied,
+  read_limit, write_limit, list_limit) instead of collapsing into one generic error.
 - Read, write, process, and network effects are declared in tool metadata. Undeclared tools
   are denied.
 - Side-effecting executors are wrapped with `SecuredToolExecutor`. Writes require approval
@@ -45,6 +54,8 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
 | `../` or absolute-path escape | canonical root-relative resolver | OS/filesystem defects |
 | symlink/junction escape | reject every linked path component | time-of-check/time-of-use on hostile hosts |
 | hard-link escape | reject regular files whose link count is not one | link creation race on hostile hosts |
+| file or parent-directory swap during an operation | post-open descriptor identity re-check against a re-walked link-free path; O_EXCL creates; partial-file cleanup | residual OS-level races on hostile hosts |
+| ambiguous Windows path forms | deny reserved device names, drive-relative paths, alternate streams, trailing space/dot components | future OS path quirks |
 | prompt-injected tool request | deterministic policy outside the model | an approved action may still be harmful |
 | approval replay | arguments digest, revision, expiry, one-time consume | stolen live operator session |
 | crash before approval consumption | retry the persisted decision; checkpoint CAS and one-shot consume | expired approval still fails closed |

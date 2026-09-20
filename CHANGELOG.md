@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Security
+
+- Hardened WorkspaceSandbox against filesystem races: open descriptors are
+  re-verified against a re-walked link-free path, parent-directory swaps and file
+  replacements are detected, exclusive creates are atomic with partial-file cleanup,
+  and failures use a typed SandboxViolation taxonomy with stable error codes.
 
 ## [1.0.0] - 2026-07-30
 

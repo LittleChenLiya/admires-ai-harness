@@ -14,6 +14,9 @@ from admires_harness.safety.policy import (
 )
 from admires_harness.safety.process import ProcessLimits, ProcessResult, ProcessSandbox
 from admires_harness.safety.workspace import (
+    SandboxExistsError,
+    SandboxNotDirectoryError,
+    SandboxNotFoundError,
     SandboxViolation,
     WorkspaceLimits,
     WorkspaceSandbox,
@@ -28,6 +31,9 @@ __all__ = [
     "ProcessResult",
     "ProcessSandbox",
     "SafetyPolicy",
+    "SandboxExistsError",
+    "SandboxNotDirectoryError",
+    "SandboxNotFoundError",
     "SandboxViolation",
     "SecuredToolExecutor",
     "ToolSafetySpec",
