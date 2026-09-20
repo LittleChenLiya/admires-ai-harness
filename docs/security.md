@@ -38,6 +38,22 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
   the parent's remaining budget.
 - API errors and traces never include provider credentials. `.env` is ignored by Git.
 
+## Process sandbox lifecycle
+
+`ProcessSandbox` runs allowlisted argument vectors without a shell, with a minimal
+environment and a workspace-confined working directory. Its lifecycle guarantees:
+
+- On timeout or caller cancellation the whole process tree is terminated (the process
+  group on POSIX, `taskkill /F /T` on Windows) and the stdout/stderr reader tasks are
+  always awaited, so no zombie process, pipe handle, or asyncio task leaks.
+- `ProcessResult.returncode` is the raw OS status: zero on success, positive for a
+  non-zero exit, and negative when a POSIX signal terminated the child. `timed_out` is
+  set only when the sandbox itself killed the tree at the deadline, so a genuine timeout
+  is never confused with a non-zero exit.
+- `max_output_bytes` applies strictly and independently to stdout and stderr;
+  `stdout_truncated`/`stderr_truncated` (and their `output_truncated` union) report
+  truncation, and truncated UTF-8 sequences decode with replacement characters.
+
 ## Threats and controls
 
 | Threat | Control | Residual risk |

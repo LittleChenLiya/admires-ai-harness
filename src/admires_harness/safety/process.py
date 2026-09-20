@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
+import signal
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
@@ -13,14 +15,28 @@ from pydantic import Field
 from admires_harness.contracts import StrictModel
 from admires_harness.safety.workspace import SandboxViolation, WorkspaceSandbox
 
+_POSIX = os.name != "nt"
+_SIGKILL = getattr(signal, "SIGKILL", 9)  # Only used on POSIX; Windows has no SIGKILL.
+_killpg = getattr(os, "killpg", None)  # POSIX only; absent on Windows.
+
 
 class ProcessResult(StrictModel):
+    """Outcome of one sandboxed process.
+
+    returncode is the raw OS status: zero on success, positive for a non-zero exit,
+    and negative when a POSIX signal terminated the child. timed_out is set only
+    when the sandbox itself killed the process tree at the deadline, so a genuine
+    timeout is never confused with a child that merely exited non-zero.
+    """
+
     argv: tuple[str, ...]
     returncode: int
     stdout: str
     stderr: str
     timed_out: bool = False
     output_truncated: bool = False
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
 
 
 class ProcessLimits(StrictModel):
@@ -37,6 +53,10 @@ class ProcessSandbox:
     must be explicitly allowlisted and are resolved once at construction. The child gets
     a minimal environment, bounded runtime/output, no stdin, and a workspace-confined
     current directory. Network isolation must still be supplied by the container/host.
+
+    On timeout or caller cancellation the whole process tree is terminated (the process
+    group on POSIX, taskkill /T on Windows) and the stdout/stderr reader tasks are
+    always awaited, so no zombie process, pipe handle, or asyncio task leaks.
     """
 
     def __init__(
@@ -87,6 +107,9 @@ class ProcessSandbox:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # A dedicated session lets POSIX kill the whole process group;
+            # Windows terminates the tree with taskkill instead.
+            start_new_session=_POSIX,
         )
         assert process.stdout is not None
         assert process.stderr is not None
@@ -94,20 +117,33 @@ class ProcessSandbox:
         stderr_task = asyncio.create_task(self._collect_output(process.stderr))
         timed_out = False
         try:
-            await asyncio.wait_for(process.wait(), timeout=self.limits.timeout_seconds)
-        except TimeoutError:
-            timed_out = True
-            process.kill()
-            await process.wait()
-        stdout, stdout_truncated = await stdout_task
-        stderr, stderr_truncated = await stderr_task
+            try:
+                await asyncio.wait_for(process.wait(), timeout=self.limits.timeout_seconds)
+            except TimeoutError:
+                timed_out = True
+                await self._terminate_process_tree(process)
+            stdout, stdout_truncated = await stdout_task
+            stderr, stderr_truncated = await stderr_task
+        except BaseException:
+            # Cancellation and unexpected errors must not leak the process tree,
+            # the pipe transports, or the reader tasks.
+            await self._terminate_process_tree(process)
+            for task in (stdout_task, stderr_task):
+                task.cancel()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+            raise
+        returncode = process.returncode
+        if returncode is None:  # pragma: no cover - process.wait() guarantees a status
+            raise RuntimeError("process finished without a return code")
         return ProcessResult(
             argv=tuple(argv),
-            returncode=process.returncode or 0,
+            returncode=returncode,
             stdout=stdout.decode("utf-8", errors="replace"),
             stderr=stderr.decode("utf-8", errors="replace"),
             timed_out=timed_out,
             output_truncated=stdout_truncated or stderr_truncated,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
         )
 
     def _register_command(self, name: str) -> None:
@@ -118,6 +154,30 @@ class ProcessSandbox:
         if resolved is None:
             raise ValueError(f"allowlisted executable was not found: {name}")
         self._commands[name.casefold()] = str(Path(resolved).resolve(strict=True))
+
+    async def _terminate_process_tree(self, process: asyncio.subprocess.Process) -> None:
+        """Kill the child and every descendant, then reap the child."""
+        if process.returncode is not None:
+            return
+        if _killpg is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                _killpg(process.pid, _SIGKILL)
+        else:
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/F",
+                "/T",
+                "/PID",
+                str(process.pid),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await killer.wait()
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+        await process.wait()
 
     async def _collect_output(self, stream: asyncio.StreamReader) -> tuple[bytes, bool]:
         chunks: list[bytes] = []
