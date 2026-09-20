@@ -24,8 +24,16 @@ and an async handler returning `ToolResult`. A side-effecting tool must accept t
 idempotency key and return a receipt. The registry applies policy before invoking the handler;
 do not perform permission checks only inside prompts or UI code.
 
+Receipt semantics are deterministic under concurrency: calls that share a run and idempotency
+key with identical arguments (compared as order-insensitive JSON) execute the handler at most
+once per in-flight batch and share one successful receipt; the same key with different
+arguments returns `idempotency_conflict`. Failures and exceptions are never cached, so a
+later call with the same key retries the handler, and failed results never carry a receipt.
+Tools declared `SideEffect.NONE` or `SideEffect.READ` bypass the receipt cache entirely.
+
 Write tests for schema rejection, policy denial, handler failure, output bounds, and repeated
-idempotency keys. Filesystem tools additionally require traversal and symlink tests.
+idempotency keys, including concurrent duplicates and conflicts. Filesystem tools additionally
+require traversal and symlink tests.
 
 ## Add an MCP server
 

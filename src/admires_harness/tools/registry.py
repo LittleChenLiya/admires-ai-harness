@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -48,6 +49,8 @@ class ToolRegistry:
     def __init__(self, definitions: Sequence[ToolDefinition] = ()) -> None:
         self._definitions: dict[str, ToolDefinition] = {}
         self._receipts: dict[tuple[UUID, str], tuple[str, ToolResult]] = {}
+        self._inflight: dict[tuple[UUID, str], tuple[str, asyncio.Future[ToolResult]]] = {}
+        self._key_locks: dict[tuple[UUID, str], asyncio.Lock] = {}
         for definition in definitions:
             self.register(definition)
 
@@ -77,29 +80,69 @@ class ToolRegistry:
                 content=exc.errors(include_url=False, include_input=False)[0]["msg"],
                 error_code="invalid_arguments",
             )
+        if definition.safety.side_effect in {SideEffect.NONE, SideEffect.READ}:
+            return await self._invoke(definition, arguments)
         digest = hashlib.sha256(
             json.dumps(call.arguments, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         key = (run_id, idempotency_key)
-        previous = self._receipts.get(key)
-        if previous is not None:
-            if previous[0] != digest:
-                return ToolResult(
-                    ok=False,
-                    content="idempotency key was already used with different arguments",
-                    error_code="idempotency_conflict",
-                )
-            return previous[1]
+        lock = self._key_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            previous = self._receipts.get(key)
+            if previous is not None:
+                if previous[0] != digest:
+                    return _conflict()
+                return previous[1]
+            pending = self._inflight.get(key)
+            if pending is not None:
+                if pending[0] != digest:
+                    return _conflict()
+                follower = True
+                future = pending[1]
+            else:
+                follower = False
+                future = asyncio.get_running_loop().create_future()
+                self._inflight[key] = (digest, future)
+        if follower:
+            return await asyncio.shield(future)
+        try:
+            result = await self._invoke(definition, arguments)
+        except BaseException as exc:
+            async with lock:
+                self._inflight.pop(key, None)
+                if not future.done():
+                    future.set_exception(exc)
+            raise
+        async with lock:
+            if result.ok:
+                receipt = result.receipt or f"sha256:{digest}"
+                result = result.model_copy(update={"receipt": receipt})
+                self._receipts[key] = (digest, result)
+            self._inflight.pop(key, None)
+            if not future.done():
+                future.set_result(result)
+        return result
+
+    @staticmethod
+    async def _invoke(definition: ToolDefinition, arguments: BaseModel) -> ToolResult:
         try:
             raw = definition.handler(arguments)
-            result = await raw if isinstance(raw, Awaitable) else raw
+            return await raw if isinstance(raw, Awaitable) else raw
         except Exception as exc:
-            return ToolResult(ok=False, content=str(exc), error_code="tool_execution_failed")
-        if definition.safety.side_effect not in {SideEffect.NONE, SideEffect.READ}:
-            receipt = result.receipt or f"sha256:{digest}"
-            result = result.model_copy(update={"receipt": receipt})
-            self._receipts[key] = (digest, result)
-        return result
+            return ToolResult(
+                ok=False,
+                content=str(exc),
+                error_code="tool_execution_failed",
+                retryable=True,
+            )
+
+
+def _conflict() -> ToolResult:
+    return ToolResult(
+        ok=False,
+        content="idempotency key was already used with different arguments",
+        error_code="idempotency_conflict",
+    )
 
 
 class _PathInput(BaseModel):
