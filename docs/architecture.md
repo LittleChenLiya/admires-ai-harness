@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 Admire's AI Harness is deliberately built without an agent orchestration framework. The
 goal is to make the control plane inspectable: graph compilation, scheduling, state
@@ -51,13 +51,27 @@ flowchart LR
 
 Every client consumes the same versioned `RunEvent` envelope. The runtime appends events
 before they are published live; a disconnected console can therefore reconnect using its
-last sequence number. Observability is not an extra logging path—trace summaries and run
+last sequence number. Observability is not an extra logging path鈥攖race summaries and run
 views are projections of the persisted event stream.
 
 The append-only log is the historical source of truth. Checkpoints are restart indexes: they
 capture state and the next node at a graph-node boundary. A compare-and-swap revision stops
 two workers from advancing the same run simultaneously. Replaying a run is read-only and
 never invokes a model or tool.
+
+### Projection and replay semantics
+
+Run views are pure folds over the persisted event stream; projecting a run never consults
+mutable application state. The projection in `observability/projections.py` is idempotent:
+redelivered events (same `event_id`, or same `sequence` with identical content) are
+deduplicated, and out-of-order input is sorted by sequence before folding, so re-applying a
+stream always yields the same snapshot. Structural corruption is reported explicitly instead
+of being folded into a fabricated snapshot: empty streams, mixed run IDs, sequence gaps, and
+conflicting duplicates raise `ValueError`. Recoverable anomalies — a missing `run.created`
+seed, unknown (newer) event types, and malformed payloads — are recorded as `ProjectionIssue`
+diagnostics on the view while the remaining events still fold deterministically. Terminal
+visibility belongs to lifecycle events only: a checkpoint carrying a terminal status never
+advances the public run status before `run.completed`/`run.failed`/`run.status` lands.
 
 ## Graph semantics
 
