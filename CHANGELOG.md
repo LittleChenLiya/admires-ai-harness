@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- ProcessSandbox now terminates the whole process tree on timeout or caller cancellation
+  (process-group kill on POSIX, taskkill /T on Windows), always reaps the child process
+  and its stdout/stderr reader tasks, and keeps output caps strict so timeouts, non-zero
+  exits, signal terminations, and truncation stay distinguishable in ProcessResult.
 
 ## [1.0.0] - 2026-07-30
 

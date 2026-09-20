@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
+import signal
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
@@ -12,6 +15,11 @@ from pydantic import Field
 
 from admires_harness.contracts import StrictModel
 from admires_harness.safety.workspace import SandboxViolation, WorkspaceSandbox
+
+# Grace period for stdout/stderr reader tasks after the child has exited. A
+# surviving grandchild can hold the pipes open; readers are cancelled after
+# this window so run() always converges.
+_READER_GRACE_SECONDS = 1.0
 
 
 class ProcessResult(StrictModel):
@@ -37,6 +45,10 @@ class ProcessSandbox:
     must be explicitly allowlisted and are resolved once at construction. The child gets
     a minimal environment, bounded runtime/output, no stdin, and a workspace-confined
     current directory. Network isolation must still be supplied by the container/host.
+
+    Timeouts and caller cancellation terminate the whole process tree (the process
+    group on POSIX, taskkill /T on Windows) and always reap the child process and the
+    output reader tasks, so no handles, zombies, or background asyncio tasks leak.
     """
 
     def __init__(
@@ -87,27 +99,37 @@ class ProcessSandbox:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=sys.platform != "win32",
         )
         assert process.stdout is not None
         assert process.stderr is not None
-        stdout_task = asyncio.create_task(self._collect_output(process.stdout))
-        stderr_task = asyncio.create_task(self._collect_output(process.stderr))
+        stdout_collector = _OutputCollector(self.limits.max_output_bytes)
+        stderr_collector = _OutputCollector(self.limits.max_output_bytes)
+        readers = [
+            asyncio.create_task(stdout_collector.drain(process.stdout)),
+            asyncio.create_task(stderr_collector.drain(process.stderr)),
+        ]
         timed_out = False
         try:
-            await asyncio.wait_for(process.wait(), timeout=self.limits.timeout_seconds)
-        except TimeoutError:
-            timed_out = True
-            process.kill()
-            await process.wait()
-        stdout, stdout_truncated = await stdout_task
-        stderr, stderr_truncated = await stderr_task
+            try:
+                await asyncio.wait_for(process.wait(), timeout=self.limits.timeout_seconds)
+            except TimeoutError:
+                timed_out = True
+                await self._terminate_tree(process)
+            except asyncio.CancelledError:
+                await self._terminate_tree(process)
+                raise
+        finally:
+            if process.returncode is None:
+                await self._terminate_tree(process)
+            await self._finish_readers(readers)
         return ProcessResult(
             argv=tuple(argv),
-            returncode=process.returncode or 0,
-            stdout=stdout.decode("utf-8", errors="replace"),
-            stderr=stderr.decode("utf-8", errors="replace"),
+            returncode=process.returncode if process.returncode is not None else -1,
+            stdout=stdout_collector.text(),
+            stderr=stderr_collector.text(),
             timed_out=timed_out,
-            output_truncated=stdout_truncated or stderr_truncated,
+            output_truncated=stdout_collector.truncated or stderr_collector.truncated,
         )
 
     def _register_command(self, name: str) -> None:
@@ -119,16 +141,66 @@ class ProcessSandbox:
             raise ValueError(f"allowlisted executable was not found: {name}")
         self._commands[name.casefold()] = str(Path(resolved).resolve(strict=True))
 
-    async def _collect_output(self, stream: asyncio.StreamReader) -> tuple[bytes, bool]:
-        chunks: list[bytes] = []
-        kept = 0
-        truncated = False
+    async def _terminate_tree(self, process: asyncio.subprocess.Process) -> None:
+        """Kill the whole process tree rooted at the child and reap the child."""
+        if process.returncode is not None:
+            return
+        if sys.platform == "win32":
+            await self._taskkill_tree(process)
+        else:
+            # The child was started in its own session, so its descendants share
+            # its process group and can be signalled together.
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+        await process.wait()
+
+    @staticmethod
+    async def _taskkill_tree(process: asyncio.subprocess.Process) -> None:
+        system_root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+        taskkill = str(Path(system_root) / "System32" / "taskkill.exe")
+        killer = await asyncio.create_subprocess_exec(
+            taskkill,
+            "/PID",
+            str(process.pid),
+            "/T",
+            "/F",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await killer.wait()
+
+    @staticmethod
+    async def _finish_readers(readers: list[asyncio.Task[None]]) -> None:
+        """Wait for output readers, cancelling any stuck behind a live grandchild."""
+        _, pending = await asyncio.wait(readers, timeout=_READER_GRACE_SECONDS)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+
+class _OutputCollector:
+    """Drain one stream, retaining at most limit bytes and flagging overflow."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._chunks: list[bytes] = []
+        self._kept = 0
+        self.truncated = False
+
+    async def drain(self, stream: asyncio.StreamReader) -> None:
         while chunk := await stream.read(65_536):
-            remaining = self.limits.max_output_bytes - kept
+            remaining = self._limit - self._kept
             if remaining > 0:
                 retained = chunk[:remaining]
-                chunks.append(retained)
-                kept += len(retained)
+                self._chunks.append(retained)
+                self._kept += len(retained)
             if len(chunk) > remaining:
-                truncated = True
-        return b"".join(chunks), truncated
+                self.truncated = True
+
+    def text(self) -> str:
+        return b"".join(self._chunks).decode("utf-8", errors="replace")

@@ -32,7 +32,9 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
   automatically replay the side effect. An operator must reconcile the external state, or the
   tool must provide durable idempotency beyond the process-local demonstration receipt cache.
 - Command execution uses a small allowlist and argument validation. There is no arbitrary
-  shell tool in v1.
+  shell tool in v1. Timeouts and caller cancellation terminate the whole process tree
+  (process group on POSIX, taskkill /T on Windows), reap the child and its output
+  readers, and enforce strict byte caps on stdout/stderr.
 - Tool output is bounded before it can enter model context or the event log.
 - Child agents receive only explicitly delegated capabilities and cannot reserve more than
   the parent's remaining budget.
