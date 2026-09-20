@@ -13,7 +13,14 @@ from admires_harness.runtime.errors import (
     TerminalRunError,
 )
 from admires_harness.runtime.graph import CompiledGraph, StateGraph
-from admires_harness.runtime.planning import Plan, PlanStep, execute_plan
+from admires_harness.runtime.planning import (
+    Plan,
+    PlanExecutor,
+    PlanStep,
+    PlanStepEvent,
+    StepStatus,
+    execute_plan,
+)
 from admires_harness.runtime.stores import InMemoryCheckpointStore, InMemoryEventStore
 from admires_harness.runtime.stream import EventBroker
 from admires_harness.runtime.types import END, NodeContext, NodeResult, ReplaySnapshot, RunResult
@@ -33,13 +40,16 @@ __all__ = [
     "NodeContext",
     "NodeResult",
     "Plan",
+    "PlanExecutor",
     "PlanStep",
+    "PlanStepEvent",
     "ReplaySnapshot",
     "RunAlreadyExistsError",
     "RunLeaseActiveError",
     "RunNotFoundError",
     "RunResult",
     "StateGraph",
+    "StepStatus",
     "TerminalRunError",
     "execute_plan",
 ]

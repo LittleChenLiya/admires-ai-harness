@@ -74,6 +74,35 @@ ID and cancellation domain, shares the parent trace ID, and can only reserve a b
 the parent's remaining budget. Its dependency/capability map is explicitly delegated by the
 parent graph. Its failure is data that the parent must handle explicitly.
 
+## Plan scheduling
+
+'Plan' validates a planner-produced DAG before any work starts: step ids are unique, every
+'depends_on' entry references a known step, self-dependencies are rejected, and
+'topological_order()' must cover every step, which rejects cycles. The topological order is
+stable — among simultaneously ready steps, author order is preserved.
+
+'PlanExecutor' (used by 'execute_plan') schedules that DAG with explicit guarantees:
+
+- Ready steps always launch in stable topological order, and at most 'max_concurrency' steps
+  run at once. Slot accounting happens without an intervening 'await', so the concurrency
+  limit cannot be raced.
+- The parent budget is split up front into one identical per-step slice ('per_step_budget'),
+  so the aggregate of all child budgets stays within the parent budget regardless of
+  completion order. A parent budget too small for the plan is rejected before any delegation.
+- Each step runs under 'step_timeout' (defaulting to its budget slice's timeout). A step that
+  exceeds it is reported as 'timed_out' with the deadline in its reason.
+- A step whose dependencies failed, timed out, or were cancelled never runs. It is marked
+  'skipped' with a reason naming the failed dependency, and the skip propagates down the
+  chain. Every step's final status and reason are returned in 'plan_step_statuses' and
+  'plan_failures'.
+- With 'fail_fast' (the default), the first failure cancels in-flight steps, marks unstarted
+  steps, awaits every started task, and only then raises 'DelegationError'. External
+  cancellation of the executor converges the same way: running steps are cancelled and
+  awaited, pending steps are marked 'cancelled', and no task is left behind.
+- 'on_step_event' receives a 'PlanStepEvent' for every lifecycle transition (sync or async
+  callbacks). A raising callback is isolated and counted in 'callback_errors'; it never
+  corrupts the schedule.
+
 ## Side effects and recovery
 
 The harness does not claim universal exactly-once execution. A tool call is at-least-once
