@@ -67,22 +67,31 @@ class TextChunker:
         normalized = " ".join(text.split())
         if not normalized:
             return []
+        length = len(normalized)
         chunks: list[str] = []
         start = 0
-        while start < len(normalized):
-            hard_end = min(start + self.chunk_size, len(normalized))
+        while start < length:
+            hard_end = min(start + self.chunk_size, length)
             end = hard_end
-            if hard_end < len(normalized):
+            if hard_end < length:
                 boundary = normalized.rfind(" ", start + 1, hard_end + 1)
                 if boundary > start:
                     end = boundary
             chunks.append(normalized[start:end])
-            if end == len(normalized):
+            if end == length:
                 break
             desired_start = max(end - self.overlap, start + 1)
             overlap_boundary = normalized.rfind(" ", start + 1, desired_start + 1)
-            next_start = overlap_boundary + 1 if overlap_boundary > start else desired_start
-            while next_start < end and normalized[next_start].isspace():
+            if overlap_boundary > start:
+                next_start = overlap_boundary + 1
+            else:
+                # Without a usable word boundary, guarantee forward progress so a
+                # high overlap to chunk_size ratio cannot multiply chunks without bound.
+                progress_floor = start + max(1, self.chunk_size - self.overlap)
+                next_start = min(max(desired_start, progress_floor), end)
+            # Only separator whitespace may be skipped; every other character of
+            # the normalized text stays covered by at least one chunk.
+            while next_start < length and normalized[next_start] == " ":
                 next_start += 1
             start = next_start
         return chunks

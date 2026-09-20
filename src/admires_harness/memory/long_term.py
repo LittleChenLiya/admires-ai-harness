@@ -134,6 +134,8 @@ class SQLiteMemoryStore:
         self._validate_namespace(namespace)
         if not query_embedding:
             raise ValueError("query_embedding must not be empty")
+        if not all(math.isfinite(value) for value in query_embedding):
+            raise ValueError("query_embedding values must be finite")
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
         if not 0.0 <= min_score <= 1.0:
@@ -145,7 +147,7 @@ class SQLiteMemoryStore:
                 """
                 SELECT * FROM memories
                 WHERE namespace = ? AND embedding_dimensions = ?
-                ORDER BY updated_at DESC LIMIT ?
+                ORDER BY updated_at DESC, id ASC LIMIT ?
                 """,
                 (namespace, len(query_embedding), self.max_candidates),
             )
@@ -153,13 +155,20 @@ class SQLiteMemoryStore:
 
         hits: list[RetrievalHit] = []
         for row in rows:
-            record = self._from_row(row)
+            try:
+                record = self._from_row(row)
+            except (KeyError, ValueError):
+                # A corrupt or anomalous row must not fail the entire query.
+                continue
+            if len(record.embedding) != len(query_embedding):
+                continue
             if metadata is not None and not all(
                 record.metadata.get(key) == value for key, value in metadata.items()
             ):
                 continue
             # Negative correlation and orthogonal/zero vectors are not useful matches.
-            score = max(0.0, self._cosine(query_embedding, record.embedding))
+            # Clamp so floating-point noise cannot push a perfect match above 1.0.
+            score = min(1.0, max(0.0, self._cosine(query_embedding, record.embedding)))
             if score >= min_score:
                 hits.append(RetrievalHit(record=record, score=score))
         hits.sort(key=lambda hit: (-hit.score, str(hit.record.id)))
