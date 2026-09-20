@@ -62,11 +62,23 @@ never invokes a model or tool.
 ## Graph semantics
 
 A `StateGraph` contains named asynchronous nodes and declared edges. `compile()` rejects an
-unknown entry point, unknown edge target, duplicate fallback, and unreachable node before a
-run starts. A node receives an immutable view of state and returns a `NodeResult`. In v1 the
-runtime deep-copies the prior state, then applies the node update as a shallow top-level
-overwrite. Conditional edges route against that new state. Applications that need nested
-aggregation must compute it inside a node; pluggable reducers are outside the v1 contract.
+unknown entry point, unknown edge target, duplicate edge, duplicate fallback, conditional
+edges without a fallback route, `END` used as a node id or edge source, and unreachable node
+before a run starts. A node receives an immutable view of state and returns a `NodeResult`.
+In v1 the runtime deep-copies the prior state, then applies the node update as a shallow
+top-level overwrite. Conditional edges route against that new state. Applications that need
+nested aggregation must compute it inside a node; pluggable reducers are outside the v1
+contract.
+
+Routing after a node completes is deterministic. An explicit `NodeResult.goto` wins, but
+only when it names a declared outgoing edge (or `END` with a declared `END` edge);
+anything else raises `GraphRoutingError`. Otherwise conditional edges are evaluated in
+declaration order against a deep-copied, read-only snapshot of state, so a predicate cannot
+mutate shared run state. Predicates may be synchronous or asynchronous, must return `bool`,
+and any exception or non-`bool` result is surfaced as `GraphRoutingError` chained to the
+original failure. When no condition matches, the single unconditional fallback edge routes;
+a node with conditional edges but no fallback is rejected at compile time because its route
+cannot always land. An edge targeting `END` (or a finished node) terminates the run.
 
 Runs have explicit terminal states. Step, token, cost, repeated-action, and wall-clock budgets
 are enforced by the runtime rather than delegated to a prompt. A child agent has its own run

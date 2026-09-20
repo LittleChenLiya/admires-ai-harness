@@ -64,9 +64,19 @@ class CompiledGraph:
             if edge.condition is None:
                 fallback = edge.target
                 continue
-            selected = edge.condition(predicate_state)
-            if inspect.isawaitable(selected):
-                selected = await selected
+            try:
+                selected = edge.condition(predicate_state)
+                if inspect.isawaitable(selected):
+                    selected = await selected
+            except Exception as exc:
+                raise GraphRoutingError(
+                    f"condition for edge {node_id!r} -> {edge.target!r} failed: {exc}"
+                ) from exc
+            if not isinstance(selected, bool):
+                raise GraphRoutingError(
+                    f"condition for edge {node_id!r} -> {edge.target!r} "
+                    f"returned {type(selected).__name__}, expected bool"
+                )
             if selected:
                 return None if edge.target == END else edge.target
         if fallback is not None:
@@ -118,6 +128,8 @@ class StateGraph:
         edges = self._edges.setdefault(source, [])
         if any(edge.condition is None for edge in edges) and condition is None:
             raise GraphDefinitionError(f"node {source!r} has more than one fallback edge")
+        if any(edge.target == target for edge in edges):
+            raise GraphDefinitionError(f"duplicate edge: {source!r} -> {target!r}")
         edges.append(Edge(source, target, condition, label))
         return self
 
@@ -135,6 +147,12 @@ class StateGraph:
             for edge in edges:
                 if edge.target != END and edge.target not in self._nodes:
                     raise GraphDefinitionError(f"edge targets unknown node: {edge.target}")
+            if any(edge.condition is not None for edge in edges) and not any(
+                edge.condition is None for edge in edges
+            ):
+                raise GraphDefinitionError(
+                    f"node {source!r} has conditional edges but no fallback route"
+                )
 
         reachable = self._reachable_from_entry()
         unreachable = sorted(set(self._nodes) - reachable)
