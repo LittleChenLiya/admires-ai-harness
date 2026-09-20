@@ -13,7 +13,21 @@ from admires_harness.contracts import JsonValue
 from admires_harness.memory.models import MemoryRecord, RetrievalHit
 from admires_harness.memory.ports import MemoryStore
 
-_TOKEN_PATTERN = re.compile(r"(?u)\b\w[\w'-]*\b")
+_CJK_PATTERN = re.compile(r"([\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff])")
+_TOKEN_PATTERN = re.compile(r"(?u)\w[\w'-]*|[^\w\s]")
+
+
+def _tokenize(text: str) -> list[str]:
+    """Split text into deterministic tokens for the offline hashing embedder.
+
+    CJK ideographs carry meaning per character, so they are isolated before
+    matching; otherwise a whole Chinese sentence would collapse into one token.
+    Emoji and other symbols become single tokens instead of vanishing, which
+    keeps emoji-only text retrievable on the no-model offline path.
+    """
+
+    spaced = _CJK_PATTERN.sub(r" \1 ", text.casefold())
+    return _TOKEN_PATTERN.findall(spaced)
 
 
 class Embedder(Protocol):
@@ -40,7 +54,7 @@ class HashingEmbedder:
 
     def _embed_one(self, text: str) -> tuple[float, ...]:
         vector = [0.0] * self.dimensions
-        tokens = _TOKEN_PATTERN.findall(text.casefold())
+        tokens = _tokenize(text)
         for token in tokens:
             digest = hashlib.blake2b(token.encode("utf-8"), digest_size=16).digest()
             index = int.from_bytes(digest[:8], "big") % self.dimensions
@@ -53,7 +67,14 @@ class HashingEmbedder:
 
 
 class TextChunker:
-    """Word-aware deterministic chunking for text documents."""
+    """Word-aware deterministic chunking for text documents.
+
+    Whitespace is normalized first. Every non-whitespace character of the
+    normalized text appears in at least one chunk (no loss), each chunk is at
+    most ``chunk_size`` characters, and consecutive chunks overlap by at most
+    ``overlap`` characters, so duplication stays bounded even for long tokens
+    without spaces.
+    """
 
     def __init__(self, *, chunk_size: int = 1_000, overlap: int = 150) -> None:
         if chunk_size < 1:

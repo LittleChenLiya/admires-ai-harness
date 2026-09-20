@@ -16,7 +16,7 @@ framework dependencies.
 | `src/admires_harness/adapters/`      | model-provider and MCP translations                               | focused adapter tests       |
 | `src/admires_harness/tools/`         | typed tool registration and output/idempotency bounds             | `tests/unit/tools/`         |
 | `src/admires_harness/safety/`        | policy, approval, workspace, and process boundaries               | unit and security tests     |
-| `src/admires_harness/memory/`        | short-term memory, long-term store, chunking, embeddings, RAG     | `tests/unit/test_memory.py` |
+| `src/admires_harness/memory/`        | short-term memory, long-term store, chunking, embeddings, RAG (see `docs/memory.md`) | `tests/unit/test_memory.py` |
 | `src/admires_harness/evaluation/`    | datasets, graders, reports, and baseline comparison               | evaluation tests            |
 | `src/admires_harness/observability/` | event-derived run views and metrics                               | projection tests            |
 | `src/admires_harness/agents/`        | three reference graphs and deterministic demo behavior            | CLI/integration/e2e tests   |

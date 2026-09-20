@@ -20,6 +20,8 @@ class SQLiteMemoryStore:
     JSON arrays in SQLite and scored in process, which keeps the no-key demo portable.
     The embedding dimension is persisted and checked so corrupt/mixed indexes fail
     closed rather than returning misleading matches.
+    ``max_candidates`` is persisted on first initialization and adopted on reopen, so
+    the candidate cap stays consistent across restarts and concurrent writers.
     """
 
     def __init__(self, path: Path, *, max_candidates: int = 10_000) -> None:
@@ -53,6 +55,28 @@ class SQLiteMemoryStore:
             await database.execute(
                 "CREATE INDEX IF NOT EXISTS ix_memories_namespace ON memories(namespace)"
             )
+            await database.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            meta_cursor = await database.execute(
+                "SELECT value FROM memory_meta WHERE key = 'max_candidates'"
+            )
+            meta_row = await meta_cursor.fetchone()
+            if meta_row is None:
+                await database.execute(
+                    "INSERT INTO memory_meta (key, value) VALUES ('max_candidates', ?)",
+                    (str(self.max_candidates),),
+                )
+            else:
+                persisted = int(meta_row[0])
+                if persisted < 1:
+                    raise ValueError("persisted max_candidates is invalid")
+                self.max_candidates = persisted
             await database.commit()
         self._initialized = True
 
@@ -145,7 +169,7 @@ class SQLiteMemoryStore:
                 """
                 SELECT * FROM memories
                 WHERE namespace = ? AND embedding_dimensions = ?
-                ORDER BY updated_at DESC LIMIT ?
+                ORDER BY updated_at DESC, id ASC LIMIT ?
                 """,
                 (namespace, len(query_embedding), self.max_candidates),
             )
@@ -153,7 +177,14 @@ class SQLiteMemoryStore:
 
         hits: list[RetrievalHit] = []
         for row in rows:
-            record = self._from_row(row)
+            try:
+                record = self._from_row(row)
+            except (KeyError, ValueError):
+                # A corrupt row must not fail the whole query; skip it deterministically.
+                continue
+            if len(record.embedding) != len(query_embedding):
+                # Defensive: declared and stored dimensions disagree for this row.
+                continue
             if metadata is not None and not all(
                 record.metadata.get(key) == value for key, value in metadata.items()
             ):
