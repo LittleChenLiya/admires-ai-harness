@@ -7,7 +7,12 @@ from admires_harness.evaluation.baseline import (
     compare_reports,
     load_report,
 )
-from admires_harness.evaluation.dataset import EvalCase, load_jsonl
+from admires_harness.evaluation.dataset import (
+    DatasetError,
+    EvalCase,
+    load_jsonl,
+    write_jsonl,
+)
 from admires_harness.evaluation.runner import (
     BenchmarkReport,
     CaseResult,
@@ -28,6 +33,7 @@ __all__ = [
     "CaseChange",
     "CaseResult",
     "ContainsScorer",
+    "DatasetError",
     "EvalCase",
     "EvalOutput",
     "EvalRunner",
@@ -41,4 +47,5 @@ __all__ = [
     "compare_reports",
     "load_jsonl",
     "load_report",
+    "write_jsonl",
 ]

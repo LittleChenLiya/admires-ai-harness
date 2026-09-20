@@ -22,3 +22,28 @@ The checked-in reference dataset contains three deterministic positive cases, on
 Security and recovery negative paths (denied write, escaped path, stale approval, budget
 exhaustion, concurrent resume, and approval recovery) live in focused pytest suites rather
 than in that JSONL dataset.
+
+## Dataset format
+
+Datasets are strict JSONL: one JSON object per line, decoded as UTF-8 with an optional
+leading BOM. Each record maps to an `EvalCase`:
+
+- `id` (string, required): stable case identifier, 1-256 characters, unique per dataset.
+- `input` (string, required): the prompt or fixture input, at most 100,000 characters.
+- `expected` (any JSON value, optional): reference output for deterministic graders.
+- `metadata` (object, optional): arbitrary JSON annotations.
+- `tags` (array of strings, optional): stored as an immutable set.
+
+Unknown fields are rejected. Blank or whitespace-only lines and lines starting with `#`
+are skipped, and surrounding whitespace on record lines is ignored, so datasets stay
+diff-friendly. A single raw line may not exceed 1,000,000 characters. Files are streamed
+line by line, so arbitrarily large datasets load in constant memory and every record keeps
+its 1-based source line number.
+
+Every loading failure raises `DatasetError` with the dataset path and source line number
+(for example `evals/core.jsonl:17: invalid JSON: ...`). Messages describe the problem —
+invalid JSON, a non-object record, a missing or mistyped field, an over-limit field, or a
+duplicate `id` (which also names the line of the first definition) — but never echo record
+payloads, so datasets may contain sensitive inputs without leaking them into logs or CI
+output. Unicode content is fully supported and round-trips stably through
+`write_jsonl`, which emits one canonical, diff-friendly case per line.
