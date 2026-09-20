@@ -74,6 +74,28 @@ ID and cancellation domain, shares the parent trace ID, and can only reserve a b
 the parent's remaining budget. Its dependency/capability map is explicitly delegated by the
 parent graph. Its failure is data that the parent must handle explicitly.
 
+## Plan scheduling
+
+`Plan` validates its step DAG at construction: unique ids, known dependencies, no
+self-dependencies, and no cycles. `topological_order()` is stable: among the steps that are
+ready at the same time, author order is preserved, so execution order is reproducible.
+
+`execute_plan` runs the DAG with a dependency-aware scheduler instead of wave-based
+batching. At most `max_concurrency` child runs are in flight at any moment, and a ready
+step starts as soon as a dependency completes and a slot frees up. Each step runs under an
+evenly divided share of the parent budget plus an optional `step_timeout_seconds` cap;
+the runtime reserves child budgets atomically, so concurrent steps cannot overspend the
+parent. A step that fails, times out, or exceeds its budget is recorded in
+`plan_failures` with the reason. A step whose dependency failed or was skipped never
+runs and is recorded in `plan_skipped` with a traceable cause (for example
+`dependency 'research' failed`). With `fail_fast=True` the first failure cancels every
+in-flight step, marks the rest as skipped, and raises `DelegationError`; external
+cancellation likewise cancels and awaits every started step before propagating, so no
+asyncio task is left pending. Progress is reported through `log` events carrying a
+`plan_event` payload (`plan_started`, `plan_step_started`, `plan_step_completed`,
+`plan_step_failed`, `plan_step_skipped`, `plan_completed`); a failing event callback
+never aborts scheduling and is counted in the result metadata.
+
 ## Side effects and recovery
 
 The harness does not claim universal exactly-once execution. A tool call is at-least-once

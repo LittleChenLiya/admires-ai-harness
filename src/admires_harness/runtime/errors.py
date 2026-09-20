@@ -41,3 +41,7 @@ class CheckpointConflictError(RuntimeErrorBase):
 
 class DelegationError(RuntimeErrorBase):
     """One or more delegated agents could not complete their plan step."""
+
+
+class BudgetExceededError(RuntimeErrorBase):
+    """A run or delegated step exhausted its declared budget."""

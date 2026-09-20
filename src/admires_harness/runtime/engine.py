@@ -24,6 +24,7 @@ from admires_harness.contracts import (
 )
 from admires_harness.ports import CheckpointStore, EventStore
 from admires_harness.runtime.errors import (
+    BudgetExceededError,
     CheckpointConflictError,
     IncompatibleCheckpointError,
     RunAlreadyExistsError,
@@ -35,9 +36,7 @@ from admires_harness.runtime.graph import CompiledGraph
 from admires_harness.runtime.stream import EventBroker
 from admires_harness.runtime.types import NodeContext, NodeResult, ReplaySnapshot, RunResult
 
-
-class _BudgetExceeded(Exception):
-    pass
+_BudgetExceeded = BudgetExceededError
 
 
 @dataclass(slots=True)
