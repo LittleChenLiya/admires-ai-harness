@@ -75,6 +75,24 @@ pnpm --dir web dev
 Then open <http://localhost:5173>. API documentation is at
 <http://localhost:8000/docs>.
 
+### CLI output contract
+
+The `list`, `demo`, `evaluate`, and `dev` commands share one output contract so
+humans and scripts can rely on them:
+
+- `--json` (always on for `evaluate`) writes exactly one UTF-8 JSON document to
+  stdout; long outputs are never soft-wrapped, so stdout stays parseable.
+- Business failures (a failed demo run, a failing benchmark, a baseline regression, or an
+  unwritable `--report` path) still emit the JSON report first, then print a human
+  message to stderr and exit `1`.
+- Invalid arguments (unknown workflow, missing or malformed dataset/baseline files) exit
+  `2` with the error on stderr and nothing on stdout.
+- Successful runs exit `0` and keep stderr clean.
+- `evaluate --baseline report.json` embeds a `baseline` comparison object in the JSON
+  payload, listing per-case regressions and improvements; any regression exits `1`.
+- Sensitive configuration keys (API keys, tokens, passwords, credentials) are redacted as
+  `***` and environment variables such as `ADMIRE_MODEL_API_KEY` are never printed.
+
 ## What the demos prove
 
 | Workflow      | Agent shape                                     | Exercised capabilities                                                          | Expected offline result                   |
