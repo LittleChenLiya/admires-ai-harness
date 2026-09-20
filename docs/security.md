@@ -17,6 +17,17 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
 - Network tools and MCP servers are disabled until explicitly configured.
 - Paths are resolved against a per-run workspace; absolute paths, traversal, symlinks,
   junctions, and hard-linked files are rejected.
+- Workspace failures are typed: policy denials raise `SandboxViolation` (a
+  `PermissionError`) with a stable machine-readable `code`, missing files raise
+  `FileNotFoundError`, and exclusive creates that lose to an existing target raise
+  `FileExistsError`. Tool adapters map these to the `error_code` field instead of a
+  generic failure, so callers can distinguish denial, absence, and conflict.
+- Parent directories are created component-by-component and re-verified after every
+  concurrent-create race; a parent swapped for a link or a regular file fails closed.
+  Opened files are re-identified through their descriptor (device/inode, link count,
+  regular-file check) before any byte is read or written, and overwrite truncation
+  happens only after that check, so a concurrently replaced path cannot redirect an
+  operation outside the workspace or leave partial content behind.
 - Read, write, process, and network effects are declared in tool metadata. Undeclared tools
   are denied.
 - Side-effecting executors are wrapped with `SecuredToolExecutor`. Writes require approval
@@ -43,8 +54,10 @@ task text, MCP servers, and workspace repositories are untrusted inputs.
 | Threat | Control | Residual risk |
 | --- | --- | --- |
 | `../` or absolute-path escape | canonical root-relative resolver | OS/filesystem defects |
-| symlink/junction escape | reject every linked path component | time-of-check/time-of-use on hostile hosts |
-| hard-link escape | reject regular files whose link count is not one | link creation race on hostile hosts |
+| symlink/junction escape | reject every linked path component; re-verify parents after create races | time-of-check/time-of-use on hostile hosts |
+| hard-link escape | reject regular files whose link count is not one, checked again on the open descriptor | link creation race on hostile hosts |
+| path replaced mid-operation | descriptor identity (device/inode) re-check before I/O; deferred truncation | residual kernel-level race on hostile hosts |
+| concurrent parent creation | atomic mkdir with post-race directory re-validation | none known locally |
 | prompt-injected tool request | deterministic policy outside the model | an approved action may still be harmful |
 | approval replay | arguments digest, revision, expiry, one-time consume | stolen live operator session |
 | crash before approval consumption | retry the persisted decision; checkpoint CAS and one-shot consume | expired approval still fails closed |

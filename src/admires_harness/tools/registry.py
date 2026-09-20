@@ -18,7 +18,7 @@ from admires_harness.contracts import (
     ToolCall,
     ToolResult,
 )
-from admires_harness.safety import ToolSafetySpec, WorkspaceSandbox
+from admires_harness.safety import SandboxViolation, ToolSafetySpec, WorkspaceSandbox
 
 ToolHandler = Callable[[BaseModel], ToolResult | Awaitable[ToolResult]]
 
@@ -93,6 +93,14 @@ class ToolRegistry:
         try:
             raw = definition.handler(arguments)
             result = await raw if isinstance(raw, Awaitable) else raw
+        except SandboxViolation as exc:
+            return ToolResult(ok=False, content=str(exc), error_code=exc.code)
+        except FileNotFoundError as exc:
+            return ToolResult(ok=False, content=str(exc), error_code="not_found")
+        except FileExistsError as exc:
+            return ToolResult(ok=False, content=str(exc), error_code="already_exists")
+        except PermissionError as exc:
+            return ToolResult(ok=False, content=str(exc), error_code="permission_denied")
         except Exception as exc:
             return ToolResult(ok=False, content=str(exc), error_code="tool_execution_failed")
         if definition.safety.side_effect not in {SideEffect.NONE, SideEffect.READ}:

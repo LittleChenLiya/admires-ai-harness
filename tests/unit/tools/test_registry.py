@@ -22,8 +22,31 @@ async def test_workspace_tools_validate_and_confine_paths(tmp_path):
         idempotency_key="escaped",
     )
     assert invalid.error_code == "invalid_arguments"
-    assert escaped.error_code == "tool_execution_failed"
+    assert escaped.error_code == "path_traversal"
     assert not (tmp_path / "secret").exists()
+
+
+@pytest.mark.asyncio
+async def test_workspace_tools_distinguish_not_found_and_exists(tmp_path):
+    registry = workspace_tools(WorkspaceSandbox(tmp_path / "workspace"))
+    run_id = uuid4()
+    missing = await registry.execute(
+        ToolCall(name="workspace.read", arguments={"path": "missing.txt"}),
+        run_id=run_id,
+        idempotency_key="missing-read",
+    )
+    assert missing.error_code == "not_found"
+    await registry.execute(
+        ToolCall(name="workspace.write", arguments={"path": "a.txt", "content": "one"}),
+        run_id=run_id,
+        idempotency_key="first-write",
+    )
+    duplicate = await registry.execute(
+        ToolCall(name="workspace.write", arguments={"path": "a.txt", "content": "two"}),
+        run_id=run_id,
+        idempotency_key="second-write",
+    )
+    assert duplicate.error_code == "already_exists"
 
 
 @pytest.mark.asyncio
