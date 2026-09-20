@@ -64,3 +64,27 @@ export interface Approval {
   decided: boolean;
   approved: boolean | null;
 }
+
+export interface TraceExportRun {
+  id: string;
+  demo: string;
+  status: RunStatus;
+  created_at: string;
+  updated_at: string;
+  error: string | null;
+}
+
+export interface TraceExport {
+  schema_version: "1";
+  kind: "admires-harness/trace-export";
+  generated_at: string;
+  run: TraceExportRun;
+  redaction: {
+    placeholder: string;
+    strategy: string;
+  };
+  event_count: number;
+  total_events: number;
+  truncated: boolean;
+  events: RunEvent[];
+}

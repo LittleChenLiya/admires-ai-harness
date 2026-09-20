@@ -94,6 +94,20 @@ export function App() {
     await selectRun(selectedId);
   }
 
+  async function exportTrace() {
+    if (!selectedId) return;
+    const document = await api.exportTrace(selectedId);
+    const blob = new Blob([JSON.stringify(document, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.download = `trace-export-${selectedId}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="app-shell">
       <Brand />
@@ -126,6 +140,7 @@ export function App() {
           onDecide={decide}
           onResume={() => act("resume")}
           onCancel={() => act("cancel")}
+          onExport={exportTrace}
         />
       </main>
       <footer>

@@ -266,6 +266,7 @@ isolation.
 ## Documentation
 
 - [Architecture and runtime semantics](docs/architecture.md)
+- [Trace export format and redaction policy](docs/trace-export.md)
 - [Security model and residual risks](docs/security.md)
 - [Evaluation methodology](docs/evaluation.md)
 - [Extension guide](docs/extending.md)
