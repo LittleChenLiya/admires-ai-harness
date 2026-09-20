@@ -24,6 +24,7 @@ framework dependencies.
 | `web/src/`                           | React launch, run list, trace inspector, and approval UI          | Vitest component tests      |
 | `web/tests/e2e/`                     | user-visible research and approval workflows                      | Playwright                  |
 | `evaluation/`                        | checked-in deterministic benchmark cases                          | evaluation CI job           |
+| `examples/`                          | runnable custom-graph example for the extension guides            | `tests/unit/test_custom_graph_example.py` |
 
 ## A run through the system
 

@@ -6,7 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Custom graph demo guide and a runnable offline conditional-graph example
+  (`examples/custom_graph.py`) with targeted branch, validation, and failure-path tests.
 
 ## [1.0.0] - 2026-07-30
 

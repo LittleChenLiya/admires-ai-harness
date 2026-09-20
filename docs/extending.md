@@ -11,6 +11,9 @@ event language.
 4. Compile during application startup so structural errors fail early.
 5. Add an offline deterministic end-to-end test and at least one failure-path test.
 
+See the [custom graph demo guide](custom-graph.md) for a runnable conditional-graph example
+that follows these rules end to end.
+
 ## Add a model provider
 
 Implement `ModelProvider.complete()` and `stream()`. Normalize response content, tool calls,
