@@ -17,6 +17,26 @@ Implement `ModelProvider.complete()` and `stream()`. Normalize response content,
 usage, and retryability into the shared contracts. Fail fast when required configuration is
 absent. Never expose authorization headers or raw provider responses in user-facing errors.
 
+The built-in `OpenAICompatibleProvider` shows the expected normalization discipline; reuse
+`StreamAccumulator` and the `_normalize_*` helpers in `adapters/models.py` where possible:
+
+- Content may be missing, a plain string, an object, or a list of parts; all forms normalize
+  to one string.
+- Tool-call arguments must parse to a JSON object. Streamed argument fragments are
+  concatenated per tool-call index and validated once at finalize; anything else raises
+  `ModelProviderError` instead of reaching the runtime.
+- Usage, finish reason, and model name are last-wins. Usage fields merge key-wise so
+  cumulative or repeated usage events never double count tokens or cost, and missing usage
+  degrades to zeroes.
+- Byte-identical stream chunks (proxy or retry replays) are dropped; empty chunks are
+  tolerated. `chunks_seen`/`chunks_merged` on the accumulator expose merge statistics.
+- Provider failures become `ModelProviderError` with `status_code` and `retryable`
+  classification. Timeouts and transport failures are retryable; error details that contain
+  user prompts or credentials are replaced with a generic message.
+
+Test providers deterministically with `httpx.MockTransport` or `MockModelProvider`; adapter
+tests must never require real network access.
+
 ## Add a tool
 
 A tool must have a unique name, JSON schema, side-effect category, risk level, output limit,
