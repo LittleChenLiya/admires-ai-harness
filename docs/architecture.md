@@ -62,11 +62,21 @@ never invokes a model or tool.
 ## Graph semantics
 
 A `StateGraph` contains named asynchronous nodes and declared edges. `compile()` rejects an
-unknown entry point, unknown edge target, duplicate fallback, and unreachable node before a
-run starts. A node receives an immutable view of state and returns a `NodeResult`. In v1 the
+empty graph, a missing or unknown entry point, an unknown edge source or target, a duplicate
+edge, a duplicate fallback, conditional edges without a fallback, `END` used as a node id or
+entry point, and any node unreachable from the entry point (including isolated cycles) before
+a run starts. A node receives an immutable view of state and returns a `NodeResult`. In v1 the
 runtime deep-copies the prior state, then applies the node update as a shallow top-level
 overwrite. Conditional edges route against that new state. Applications that need nested
 aggregation must compute it inside a node; pluggable reducers are outside the v1 contract.
+
+Routing after a node resolves in a fixed order: `finish` ends the run, an explicit `goto`
+must name a declared edge target (`END` included) or the run fails with
+`GraphRoutingError`, otherwise outgoing edges are evaluated in declaration order and the
+first matching condition wins. The unconditional fallback edge, when declared, is used only
+if no condition matches. Predicates may be sync or async; they receive a deep-copied
+read-only view of state so they cannot mutate shared run state, and any exception they raise
+is re-raised as `GraphRoutingError` chained to the original cause.
 
 Runs have explicit terminal states. Step, token, cost, repeated-action, and wall-clock budgets
 are enforced by the runtime rather than delegated to a prompt. A child agent has its own run
