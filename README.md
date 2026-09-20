@@ -267,6 +267,7 @@ isolation.
 
 - [Architecture and runtime semantics](docs/architecture.md)
 - [Security model and residual risks](docs/security.md)
+- [Policy-wrapped MCP tools demo](docs/mcp-policy-demo.md)
 - [Evaluation methodology](docs/evaluation.md)
 - [Extension guide](docs/extending.md)
 - [Contributor quickstart](docs/contributor-quickstart.md)
